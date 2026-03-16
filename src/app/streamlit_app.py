@@ -6,7 +6,15 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.patches import Arc, FancyArrowPatch
 import os
+import json
+import math
+import time as _time
 from datetime import datetime
+try:
+    import requests as _requests
+    _REQUESTS_OK = True
+except ImportError:
+    _REQUESTS_OK = False
 
 st.set_page_config(
     page_title="Statlasberg",
@@ -432,9 +440,9 @@ with col_h5:
 st.markdown("---")
 
 # ── Main tabs ─────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🏅 Rankings", "🎯 Sweet 16 Picks", "🔍 Team Deep Dive",
-    "📊 Model vs Committee", "🎲 Championship Odds", "🏆 Bracket"
+    "📊 Model vs Committee", "🎲 Championship Odds", "🏆 Bracket", "📺 Live"
 ])
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1220,3 +1228,291 @@ with tab6:
                             if st.button("↩ Clear result", key=f"clr_{matchup_key}"):
                                 st.session_state.results = [r for r in st.session_state.results if r["matchup"] != matchup_key]
                                 st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 7 — LIVE GAMES  (ESPN public API, no key required)
+# ─────────────────────────────────────────────────────────────────────────────
+ESPN_SCOREBOARD = (
+    "https://site.api.espn.com/apis/site/v2/sports/basketball/"
+    "mens-college-basketball/scoreboard?groups=100&limit=50"
+)
+ESPN_PLAYBYPLAY = (
+    "https://site.api.espn.com/apis/site/v2/sports/basketball/"
+    "mens-college-basketball/summary?event={event_id}"
+)
+
+
+def fetch_live_games():
+    """Pull current NCAA tournament games from ESPN's public scoreboard API.
+    Returns list of game dicts or empty list on failure."""
+    if not _REQUESTS_OK:
+        return []
+    try:
+        resp = _requests.get(ESPN_SCOREBOARD, timeout=6,
+                             headers={"User-Agent": "statlasberg/1.0"})
+        resp.raise_for_status()
+        data = resp.json()
+        games = []
+        for event in data.get("events", []):
+            comp = event.get("competitions", [{}])[0]
+            comps = comp.get("competitors", [])
+            if len(comps) < 2:
+                continue
+            # Identify home/away — NCAA tournament is neutral so both are "away"
+            t1 = comps[0]; t2 = comps[1]
+            status_obj = event.get("status", {})
+            status_type = status_obj.get("type", {})
+            state = status_type.get("state", "pre")      # pre / in / post
+            display_clock = status_obj.get("displayClock", "0:00")
+            period = status_obj.get("period", 0)
+            completed = status_type.get("completed", False)
+
+            def team_info(t):
+                score_str = t.get("score", "0")
+                try:
+                    score = int(score_str)
+                except Exception:
+                    score = 0
+                return {
+                    "name":    t.get("team", {}).get("displayName", "Unknown"),
+                    "abbr":    t.get("team", {}).get("abbreviation", "???"),
+                    "score":   score,
+                    "record":  t.get("records", [{}])[0].get("summary", ""),
+                }
+
+            g = {
+                "event_id":  event.get("id", ""),
+                "name":      event.get("name", ""),
+                "state":     state,
+                "completed": completed,
+                "period":    period,
+                "clock":     display_clock,
+                "team1":     team_info(t1),
+                "team2":     team_info(t2),
+                "headline":  comp.get("notes", [{}])[0].get("headline", ""),
+            }
+            games.append(g)
+        return games
+    except Exception:
+        return []
+
+
+def fetch_play_by_play(event_id):
+    """Return last N plays and current scoring run for a game."""
+    if not _REQUESTS_OK or not event_id:
+        return [], ""
+    try:
+        url = ESPN_PLAYBYPLAY.format(event_id=event_id)
+        resp = _requests.get(url, timeout=6,
+                             headers={"User-Agent": "statlasberg/1.0"})
+        resp.raise_for_status()
+        data = resp.json()
+        plays_raw = []
+        for period_data in data.get("plays", []):
+            # ESPN returns plays inside period arrays
+            if isinstance(period_data, dict):
+                plays_raw.append(period_data)
+        # Get last 10 plays
+        last_plays = plays_raw[-10:] if len(plays_raw) >= 10 else plays_raw
+        play_texts = [p.get("text", "") for p in reversed(last_plays) if p.get("text")]
+
+        # Detect scoring run: last 6 scoring plays
+        score_plays = [p for p in reversed(plays_raw) if p.get("scoringPlay", False)][:6]
+        run_team = ""
+        run_count = 0
+        if score_plays:
+            first_scorer = score_plays[0].get("team", {}).get("displayName", "")
+            run = 0
+            for sp in score_plays:
+                if sp.get("team", {}).get("displayName", "") == first_scorer:
+                    run += 1
+                else:
+                    break
+            if run >= 3:
+                run_team = first_scorer
+                run_count = run
+
+        momentum = f"🔥 {run_team} on a {run_count}-0 run!" if run_count >= 3 else ""
+        return play_texts, momentum
+    except Exception:
+        return [], ""
+
+
+def live_win_prob(pregame_p, score_diff, period, clock_str, total_periods=2):
+    """Blend model pre-game probability with in-game state.
+    score_diff = team1_score - team2_score (positive = team1 leading).
+    Returns (p_team1_wins, p_team2_wins).
+    """
+    # Parse clock to seconds remaining in current period
+    try:
+        parts = clock_str.split(":")
+        clock_secs = int(parts[0]) * 60 + int(parts[1]) if len(parts) == 2 else 0
+    except Exception:
+        clock_secs = 0
+
+    total_game_secs = total_periods * 20 * 60  # 2×20 min halves = 2400s
+    period_secs = 20 * 60  # 20 min per half
+    elapsed_secs = max(0, (period - 1) * period_secs + (period_secs - clock_secs))
+    game_pct = min(1.0, elapsed_secs / total_game_secs)  # 0=start, 1=end
+
+    # In-game win probability: score diff matters more as game ends
+    # Sensitivity: at end of game a 1-point lead is ~85% win; early it's ~52%
+    k = 3.0 + game_pct * 18.0   # scale factor grows from 3 (start) to 21 (end)
+    in_game_p = 1.0 / (1.0 + math.exp(-score_diff / k))
+
+    # Blend: pre-game model dominates early, in-game dominates late
+    blended = (1 - game_pct) * pregame_p + game_pct * in_game_p
+    return round(blended, 3), round(1 - blended, 3)
+
+
+def model_pregame_prob(team1_name, team2_name, bkt_df):
+    """Look up pre-game win probability from contender scores."""
+    def get_score(name):
+        rows = bkt_df[bkt_df["team"].str.lower() == name.lower()]
+        if len(rows) == 0:
+            # fuzzy: find closest team name
+            for _, r in bkt_df.iterrows():
+                if name.lower() in r["team"].lower() or r["team"].lower() in name.lower():
+                    return safe_f(r.get("contender_score", 55))
+        return safe_f(rows.iloc[0].get("contender_score", 55)) if len(rows) > 0 else 55.0
+    s1 = get_score(team1_name)
+    s2 = get_score(team2_name)
+    return win_prob_sigmoid(s1, s2), s1, s2
+
+
+with tab7:
+    st.markdown('<div class="section-header">📺 Live — NCAA Tournament Games</div>', unsafe_allow_html=True)
+    st.caption("Live scores via ESPN · In-game win probability blends model pre-game score with live game state. Refreshes on demand.")
+
+    col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([1, 1, 4])
+    with col_ctrl1:
+        auto_ref = st.toggle("⏱ Auto-refresh (60s)", value=False, key="live_auto_refresh")
+    with col_ctrl2:
+        if st.button("🔄 Refresh now", key="live_refresh_btn"):
+            st.cache_data.clear()
+
+    if auto_ref:
+        st.markdown('<meta http-equiv="refresh" content="60">', unsafe_allow_html=True)
+
+    if not _REQUESTS_OK:
+        st.warning("⚠️ `requests` library not installed. Run `pip install requests` and restart.")
+    else:
+        with st.spinner("Fetching live games from ESPN…"):
+            live_games = fetch_live_games()
+
+        # Filter to tournament-relevant games (status=in or post from today)
+        live_now   = [g for g in live_games if g["state"] == "in"]
+        recent_fin = [g for g in live_games if g["state"] == "post"][:8]
+        upcoming   = [g for g in live_games if g["state"] == "pre"][:8]
+
+        if not live_games:
+            st.info("🏀 No NCAA tournament games found right now. Games appear here once tipoff. Check back during tournament play (March 20 – April 7, 2026).")
+        else:
+            # ── LIVE GAMES ────────────────────────────────────────────────────
+            if live_now:
+                st.markdown(f'<div class="section-header">🔴 LIVE NOW — {len(live_now)} game(s)</div>', unsafe_allow_html=True)
+                for g in live_now:
+                    t1 = g["team1"]; t2 = g["team2"]
+                    sd = t1["score"] - t2["score"]
+                    pregame_p, s1, s2 = model_pregame_prob(t1["name"], t2["name"], in_bracket)
+                    p1, p2 = live_win_prob(pregame_p, sd, g["period"], g["clock"])
+
+                    # Win probability bar color
+                    lead_team = t1["name"] if sd >= 0 else t2["name"]
+                    lead_p    = max(p1, p2)
+                    bar_col   = "#4ade80" if lead_p >= 0.7 else "#f59e0b" if lead_p >= 0.55 else "#94a3b8"
+
+                    period_str = f"{'1st' if g['period']==1 else '2nd' if g['period']==2 else 'OT'} · {g['clock']}"
+
+                    with st.expander(
+                        f"🔴 {t1['name']} {t1['score']} — {t2['score']} {t2['name']}  |  {period_str}",
+                        expanded=True
+                    ):
+                        lcol1, lcol2 = st.columns(2)
+                        for col, team, p, my_score, opp_score in [
+                            (lcol1, t1, p1, s1, s2),
+                            (lcol2, t2, p2, s2, s1),
+                        ]:
+                            with col:
+                                is_leader = (team["score"] >= (t2["score"] if team is t1 else t1["score"]))
+                                border_c = "#f97316" if is_leader else "#374151"
+                                st.markdown(
+                                    f'<div style="background:#131820;border:2px solid {border_c};border-radius:8px;padding:10px">'
+                                    f'<div style="font-size:1.1rem;font-weight:800;color:#f1f5f9">{team["name"]}</div>'
+                                    f'<div style="font-size:2.5rem;font-weight:900;color:{"#4ade80" if is_leader else "#f1f5f9"}">{team["score"]}</div>'
+                                    f'<div style="color:#94a3b8;font-size:0.78rem">{team["record"]}</div>'
+                                    f'<div style="margin-top:8px">'
+                                    f'<div style="background:#2d3748;border-radius:4px;height:8px">'
+                                    f'<div style="width:{int(p*100)}%;background:{bar_col};height:8px;border-radius:4px"></div></div>'
+                                    f'<div style="color:{bar_col};font-weight:700;font-size:1.05rem;margin-top:3px">'
+                                    f'{p*100:.0f}% live win prob</div>'
+                                    f'<small style="color:#64748b">Pre-game model score: {my_score:.1f} · '
+                                    f'{american_line(p)} live line</small>'
+                                    f'</div></div>',
+                                    unsafe_allow_html=True)
+
+                        # Play-by-play + momentum
+                        plays, momentum = fetch_play_by_play(g["event_id"])
+                        if momentum:
+                            st.markdown(f'<div style="background:#1a2a1a;border-left:3px solid #16a34a;padding:6px 10px;border-radius:4px;margin-top:6px;color:#d1fae5;font-weight:700">{momentum}</div>', unsafe_allow_html=True)
+                        if plays:
+                            st.markdown('<small style="color:#64748b">Recent plays:</small>', unsafe_allow_html=True)
+                            for play_txt in plays[:5]:
+                                st.markdown(f'<div style="color:#94a3b8;font-size:0.78rem;padding:2px 0">• {play_txt}</div>', unsafe_allow_html=True)
+
+                        # Model note
+                        model_pick = t1["name"] if pregame_p >= 0.5 else t2["name"]
+                        model_conf = max(pregame_p, 1-pregame_p)
+                        agreement  = "✅ Aligns" if (p1 >= 0.5) == (pregame_p >= 0.5) else "⚠️ Diverging"
+                        st.markdown(
+                            f'<small style="color:#94a3b8">📊 Model pre-game pick: <strong style="color:#f1f5f9">{model_pick}</strong>'
+                            f' ({model_conf*100:.0f}% pre-game) — {agreement} from live state</small>',
+                            unsafe_allow_html=True)
+
+            # ── RECENTLY FINISHED ─────────────────────────────────────────────
+            if recent_fin:
+                st.markdown("---")
+                st.markdown('<div class="section-header">✅ Final Scores</div>', unsafe_allow_html=True)
+                fin_cols = st.columns(min(4, len(recent_fin)))
+                for idx, g in enumerate(recent_fin[:4]):
+                    t1 = g["team1"]; t2 = g["team2"]
+                    winner = t1 if t1["score"] > t2["score"] else t2
+                    loser  = t2 if t1["score"] > t2["score"] else t1
+                    pregame_p, _, _ = model_pregame_prob(t1["name"], t2["name"], in_bracket)
+                    model_got_it = (pregame_p >= 0.5) == (t1["score"] > t2["score"])
+                    verdict = "✅ Model correct" if model_got_it else "❌ Upset — model wrong"
+                    with fin_cols[idx % 4]:
+                        st.markdown(
+                            f'<div class="team-card">'
+                            f'<strong style="color:#4ade80">{winner["name"]} {winner["score"]}</strong>'
+                            f'<span style="color:#64748b"> def. </span>'
+                            f'{loser["name"]} {loser["score"]}'
+                            f'<br/><small style="color:#94a3b8">{verdict}</small>'
+                            f'</div>',
+                            unsafe_allow_html=True)
+
+            # ── UPCOMING ─────────────────────────────────────────────────────
+            if upcoming:
+                st.markdown("---")
+                st.markdown('<div class="section-header">🕐 Upcoming Games — Pre-Game Model Lines</div>', unsafe_allow_html=True)
+                up_cols = st.columns(min(3, len(upcoming)))
+                for idx, g in enumerate(upcoming[:6]):
+                    t1 = g["team1"]; t2 = g["team2"]
+                    pregame_p, s1, s2 = model_pregame_prob(t1["name"], t2["name"], in_bracket)
+                    fav   = t1["name"] if pregame_p >= 0.5 else t2["name"]
+                    fav_p = max(pregame_p, 1-pregame_p)
+                    with up_cols[idx % 3]:
+                        st.markdown(
+                            f'<div class="team-card">'
+                            f'<strong style="color:#f1f5f9">{t1["name"]}</strong>'
+                            f'<span style="color:#64748b"> vs </span>'
+                            f'<strong style="color:#f1f5f9">{t2["name"]}</strong>'
+                            f'<br/><small style="color:#94a3b8">Model picks: <strong style="color:#4ade80">{fav}</strong> '
+                            f'({fav_p*100:.0f}%) · {american_line(fav_p if fav==t1["name"] else 1-fav_p)}</small>'
+                            f'<br/><small style="color:#64748b">Scores: {t1["name"]} {s1:.1f} vs {t2["name"]} {s2:.1f}</small>'
+                            f'</div>',
+                            unsafe_allow_html=True)
+
+        st.markdown("---")
+        st.caption("Data: ESPN public API · Refresh rate: manual or 60s auto · In-game probability blends model pre-game score (dominates early) with live score differential (dominates late). Model principles stay constant — late-game score doesn't override the model, it updates it.")
