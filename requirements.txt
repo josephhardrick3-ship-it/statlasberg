@@ -10,3 +10,5 @@ lxml>=4.9
 rapidfuzz>=3.5
 pytest>=7.4
 python-dotenv>=1.0
+plotly>=5.18
+matplotlib>=3.7
