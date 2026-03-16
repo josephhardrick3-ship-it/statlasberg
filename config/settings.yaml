@@ -1,0 +1,27 @@
+project:
+  name: march-madness-bot
+  version: "0.1.0"
+  current_season: 2026
+
+paths:
+  raw_data: data/raw
+  interim_data: data/interim
+  features: data/features
+  outputs: data/outputs
+  brackets: data/brackets
+
+data_sources:
+  ncaa_stats: "https://stats.ncaa.org"
+  ncaa_net: "https://www.ncaa.com/rankings/basketball-men/d1/ncaa-mens-basketball-net-rankings"
+  espn_base: "https://www.espn.com/mens-college-basketball"
+  sports_ref: "https://www.sports-reference.com/cbb"
+  torvik: "https://barttorvik.com"
+
+model:
+  type: weighted_baseline
+  simulations: 10000
+  backtest_seasons: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2021, 2022, 2023, 2024, 2025]
+
+scoring:
+  contender_max: 100
+  upset_risk_max: 100

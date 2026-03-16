@@ -1,0 +1,65 @@
+season,region,seed,team
+2026,East,1,Duke
+2026,East,2,Connecticut
+2026,East,3,Purdue
+2026,East,4,Illinois
+2026,East,5,Tennessee
+2026,East,6,Gonzaga
+2026,East,7,NC State
+2026,East,8,Indiana
+2026,East,9,Auburn
+2026,East,10,Vanderbilt
+2026,East,11,Texas
+2026,East,12,Dayton
+2026,East,13,Princeton
+2026,East,14,Oral Roberts
+2026,East,15,Bryant
+2026,East,16,TBD_auto_East
+2026,Midwest,1,Michigan
+2026,Midwest,2,Iowa State
+2026,Midwest,3,Wisconsin
+2026,Midwest,4,Kansas
+2026,Midwest,5,BYU
+2026,Midwest,6,Michigan State
+2026,Midwest,7,Arkansas
+2026,Midwest,8,Marquette
+2026,Midwest,9,Virginia
+2026,Midwest,10,Missouri
+2026,Midwest,11,Minnesota
+2026,Midwest,12,New Mexico
+2026,Midwest,13,High Point
+2026,Midwest,14,Morehead State
+2026,Midwest,15,McNeese State
+2026,Midwest,16,TBD_auto_Midwest
+2026,South,1,Florida
+2026,South,2,Alabama
+2026,South,3,Texas A&M
+2026,South,4,North Carolina
+2026,South,5,Saint Marys CA
+2026,South,6,Texas Tech
+2026,South,7,Creighton
+2026,South,8,Kansas State
+2026,South,9,Colorado State
+2026,South,10,Stanford
+2026,South,11,Mississippi State
+2026,South,12,Liberty
+2026,South,13,Akron
+2026,South,14,Grand Canyon
+2026,South,15,Lipscomb
+2026,South,16,TBD_auto_South
+2026,West,1,Arizona
+2026,West,2,Houston
+2026,West,3,St. Johns
+2026,West,4,Baylor
+2026,West,5,UCLA
+2026,West,6,Kentucky
+2026,West,7,Oregon
+2026,West,8,Georgia
+2026,West,9,Northwestern
+2026,West,10,San Diego State
+2026,West,11,Oklahoma
+2026,West,12,Colorado State
+2026,West,13,Troy
+2026,West,14,Furman
+2026,West,15,Eastern Washington
+2026,West,16,TBD_auto_West

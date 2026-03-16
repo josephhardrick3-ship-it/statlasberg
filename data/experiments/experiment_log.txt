@@ -1,0 +1,179 @@
+[05:53:39] =================================================================
+[05:53:39] EXPERIMENT: Extra signals for 2026 NCAA model
+[05:53:39] Started: 2026-03-09 05:53:39
+[05:53:39] NOTE: Results saved to data/experiments/ only — model unchanged
+[05:53:39] =================================================================
+[05:53:40] 
+--- Building ESPN team ID map ---
+[05:53:40]   ESPN → SR map: 362 entries, 358 IDs mapped
+[05:53:40] 
+=== Q1 PERFORMANCE (vs NET top-25) ===
+[05:53:40]   NET top-25 teams: ['Alabama', 'Arizona', 'Arkansas', 'Brigham Young', 'Connecticut', 'Duke', 'Florida', 'Gonzaga', 'Houston', 'Illinois', 'Iowa', 'Iowa State', 'Kansas', 'Louisville', 'Michigan', 'Michigan State', 'Nebraska', 'North Carolina', 'Purdue', "Saint Mary's", 'Tennessee', 'Texas Tech', 'Vanderbilt', 'Virginia']
+[05:53:41]   Teams with ≥3 Q1 games: 84
+[05:53:41]   Top 25 Q1 performers:
+[05:53:41]     Michigan                     7-1  (88%)
+[05:53:41]     Duke                         9-2  (82%)
+[05:53:41]     Connecticut                  4-1  (80%)
+[05:53:41]     Arizona                      8-2  (80%)
+[05:53:41]     North Carolina               4-2  (67%)
+[05:53:41]     Wisconsin                    5-3  (62%)
+[05:53:41]     Florida                      4-3  (57%)
+[05:53:41]     Michigan State               5-4  (56%)
+[05:53:41]     Purdue                       5-4  (56%)
+[05:53:41]     Kansas                       6-5  (55%)
+[05:53:41]     Gonzaga                      2-2  (50%)
+[05:53:41]     Iowa State                   4-4  (50%)
+[05:53:41]     Vanderbilt                   3-3  (50%)
+[05:53:41]     Illinois                     5-5  (50%)
+[05:53:41]     Central Florida              3-3  (50%)
+[05:53:41]     Stanford                     2-2  (50%)
+[05:53:41]     Texas Tech                   5-6  (46%)
+[05:53:41]     Arkansas                     4-5  (44%)
+[05:53:41]     Nebraska                     3-4  (43%)
+[05:53:41]     Georgia                      2-3  (40%)
+[05:53:41]     Tennessee                    4-6  (40%)
+[05:53:41]     Texas Christian              3-5  (38%)
+[05:53:41]     Missouri                     3-5  (38%)
+[05:53:41]     Houston                      3-5  (38%)
+[05:53:41]     UCLA                         3-5  (38%)
+[05:53:41] 
+  Saved /Users/josephhardrick/Downloads/Projects/march-madness-bot/data/experiments/q1_performance_2026.csv
+[05:53:42] 
+=== PLAYER GEOGRAPHIC ORIGINS ===
+[05:53:43]   [Michigan] 16 players — FL:3, NY:3, IL:2, NJ:2, OR:1  intl=19%
+[05:53:44]   [Duke] 13 players — VA:3, FL:2, NC:2, CA:1, NJ:1  intl=15%
+[05:53:44]   [Arizona] 16 players — CA:2, NY:2, AZ:2, VIC:1, NV:1  intl=50%
+[05:53:45]   [Florida] 15 players — FL:5, WA:2, NY:1, NC:1, PA:1  intl=47%
+[05:53:45]   [Illinois] 14 players — IL:4, IN:2, MI:1, CA:1, KS:1  intl=36%
+[05:53:46]   [Houston] 14 players — TX:3, LA:2, CA:2, ID:1, MS:1  intl=14%
+[05:53:47]   [Purdue] 16 players — IN:7, OH:2, QLD:1, MA:1, GA:1  intl=12%
+[05:53:47]   [Connecticut] 15 players — VA:3, NC:1, TAS:1, MA:1, IL:1  intl=33%
+[05:53:48]   [Alabama] 17 players — WI:2, PA:1, VT:1, TX:1, NC:1  intl=12%
+[05:53:49]   [Texas Tech] 14 players — TX:6, AB:1, NC:1, GA:1, FL:1  intl=14%
+[05:53:49]   [Gonzaga] 16 players — WA:4, IL:2, CA:1, KS:1, ID:1  intl=19%
+[05:53:50]   [Vanderbilt] 16 players — CA:4, TX:3, GA:2, FL:2, IN:2  intl=0%
+[05:53:51]   [Louisville] 16 players — DC:2, KY:2, IN:1, FL:1, MN:1  intl=25%
+[05:53:52]   [Michigan State] 15 players — MI:4, GA:1, IL:1, MS:1, KY:1  intl=0%
+[05:53:53]   [Tennessee] 16 players — TX:3, VA:2, AL:2, TN:2, NC:1  intl=19%
+[05:53:53]   [Arkansas] 15 players — TN:2, PA:2, MO:1, MI:1, GA:1  intl=20%
+[05:53:54]   [Iowa State] 14 players — WI:4, IA:3, ID:1, MN:1, NV:1  intl=14%
+[05:53:55]   [Virginia] 15 players — VA:4, CA:2, NJ:1, UT:1, IL:1  intl=27%
+[05:53:56]   [Kansas] 16 players — TX:2, MO:1, IL:1, NY:1, NE:1  intl=25%
+[05:53:56]   [Nebraska] 16 players — NE:6, MN:1, IN:1, TX:1, NJ:1  intl=25%
+[05:53:57]   [St. John's] 15 players — WA:1, TX:1, IL:1, NY:1, FL:1  intl=47%
+[05:53:58]   [Wisconsin] 15 players — WI:4, MN:4, NY:1, MI:1, NC:1  intl=27%
+[05:53:59]   [Iowa] 14 players — MO:6, IA:2, TX:1, IL:1, KS:1  intl=7%
+[05:53:59]   [North Carolina] 16 players — NC:6, IL:1, VA:1, MO:1, TX:1  intl=19%
+[05:54:00]   [Saint Mary's] 15 players — CA:8, ID:1, NSW:1, ON:1, QLD:1  intl=40%
+[05:54:01]   [Indiana] 17 players — FL:3, IN:3, MA:1, TX:1, IA:1  intl=12%
+[05:54:01]   [UCLA] 15 players — CA:8, NY:2, WA:1, IN:1, AZ:1  intl=0%
+[05:54:02]   [Brigham Young] 17 players — UT:3, CA:1, MO:1, MA:1, WA:1  intl=35%
+[05:54:03]   [Georgia] 15 players — GA:4, FL:3, SC:1, TN:1, IN:1  intl=7%
+[05:54:03]   [Santa Clara] 17 players — TX:4, IL:2, PA:1, LA:1, CA:1  intl=35%
+[05:54:04]   Hometown data: 30/30 teams fetched
+[05:54:04] 
+  Saved /Users/josephhardrick/Downloads/Projects/march-madness-bot/data/experiments/player_hometowns_2026.csv
+[05:54:04] 
+  Geographic breakdown (top 15 by adj_margin):
+[05:54:04]     Michigan                   South=23%  Midwest=31%  NE=38%  West=8%  Intl=19%
+[05:54:04]     Duke                       South=73%  Midwest=0%  NE=18%  West=9%  Intl=15%
+[05:54:04]     Arizona                    South=0%  Midwest=11%  NE=22%  West=56%  Intl=50%
+[05:54:04]     Florida                    South=50%  Midwest=0%  NE=17%  West=17%  Intl=47%
+[05:54:04]     Illinois                   South=0%  Midwest=89%  NE=0%  West=11%  Intl=36%
+[05:54:04]     Houston                    South=67%  Midwest=0%  NE=0%  West=33%  Intl=14%
+[05:54:04]     Purdue                     South=7%  Midwest=73%  NE=13%  West=0%  Intl=12%
+[05:54:04]     Connecticut                South=36%  Midwest=27%  NE=18%  West=9%  Intl=33%
+[05:54:04]     Alabama                    South=25%  Midwest=33%  NE=33%  West=8%  Intl=12%
+[05:54:04]     Texas Tech                 South=69%  Midwest=8%  NE=0%  West=15%  Intl=14%
+[05:54:04]     Gonzaga                    South=8%  Midwest=23%  NE=8%  West=62%  Intl=19%
+[05:54:04]     Vanderbilt                 South=62%  Midwest=12%  NE=0%  West=25%  Intl=0%
+[05:54:04]     Louisville                 South=50%  Midwest=33%  NE=17%  West=0%  Intl=25%
+[05:54:04]     Michigan State             South=40%  Midwest=40%  NE=13%  West=7%  Intl=0%
+[05:54:04]     Tennessee                  South=85%  Midwest=0%  NE=15%  West=0%  Intl=19%
+[05:54:05] 
+=== COACHING CHANGES ===
+[05:54:05]   CSV comparison found 0 coach changes
+[05:54:05]   Alabama                   Nate Oats → Grant McCasland  [fired — after 2024 tourney exit]
+[05:54:05]   Kentucky                  John Calipari → Mark Pope  [Calipari to Arkansas]
+[05:54:05]   Arkansas                  Eric Musselman → John Calipari  [hired from Kentucky]
+[05:54:05]   Indiana                   Mike Woodson → Darian DeVries  [Woodson fired]
+[05:54:05]   Oklahoma                  Porter Moser → Kelvin Sampson  [Moser fired; Sampson returned]
+[05:54:05]   Florida State             Leonard Hamilton → Jaylon Smith  [Hamilton retired]
+[05:54:05]   Saint Louis               Travis Ford → Josh Schertz  [Ford out]
+[05:54:05]   USC                       Andy Enfield → Eric Musselman  [hired from Alabama]
+[05:54:05]   San Jose State            Tim Miles → TBD  [Miles departed]
+[05:54:05]   Georgetown                Patrick Ewing → Ed Cooley  [Ewing out]
+[05:54:05]   Total new coaches on top programs: 10
+[05:54:32] 
+  Saved /Users/josephhardrick/Downloads/Projects/march-madness-bot/data/experiments/coach_changes_2026.csv
+[05:54:33] 
+=== TRANSFER PORTAL / KEY ROSTER MOVES ===
+[05:54:33]   Top teams by incoming 5-star talent:
+[05:54:34]   Duke                      5 new  avg★5.0  [Cooper Flagg, Isaiah Evans, Kon Knueppel, Cameron Boozer, Khaman Maluach]
+[05:54:34]   Michigan                  2 new  avg★4.0  [Otega Oweh, Vladislav Goldin]
+[05:54:34]   Rutgers                   2 new  avg★5.0  [Ace Bailey, Dylan Harper]
+[05:54:34]   Baylor                    1 new  avg★5.0  [VJ Edgecombe]
+[05:54:34]   Connecticut               1 new  avg★5.0  [Liam McNeeley]
+[05:54:34]   Illinois                  1 new  avg★5.0  [Kasparas Jakucionis]
+[05:54:34]   Maryland                  1 new  avg★5.0  [Derik Queen]
+[05:54:34]   Saint Mary's              1 new  avg★5.0  [Nolan Traore]
+[05:54:34]   Texas                     1 new  avg★5.0  [Tre Johnson]
+[05:54:34]   UCLA                      1 new  avg★4.0  [Caleb Wilson]
+[05:54:34] 
+  Key returning stars:
+[05:54:34]   Florida                   Walter Clayton Jr. (5th-year return)
+[05:54:34]   Auburn                    Johni Broome (Returned — preseason POY)
+[05:54:34]   North Carolina            RJ Davis (5th year return)
+[05:54:34]   Creighton                 Ryan Kalkbrenner (Returned senior)
+[05:54:34]   Wisconsin                 John Tonje (Transfer from Colorado St.)
+[05:54:34]   Gonzaga                   Hunter Sallis (Returned)
+[05:54:34]   Villanova                 Eric Dixon (Super-senior)
+[05:54:34]   Houston                   Chris Cenac Jr. (Returned)
+[05:54:34]   Michigan                  Danny Wolf (Transfer from Yale)
+[05:54:34] 
+  Saved /Users/josephhardrick/Downloads/Projects/march-madness-bot/data/experiments/transfer_portal_2026.csv
+[05:54:34] 
+=================================================================
+[05:54:34] EXPERIMENT SUMMARY
+[05:54:34] =================================================================
+[05:54:34] 
+Q1 Record (vs NET top-25) — teams with ≥3 games:
+[05:54:34]   Michigan                     7-1  (88%)
+[05:54:34]   Duke                         9-2  (82%)
+[05:54:34]   Connecticut                  4-1  (80%)
+[05:54:34]   Arizona                      8-2  (80%)
+[05:54:34]   North Carolina               4-2  (67%)
+[05:54:34]   Wisconsin                    5-3  (62%)
+[05:54:34]   Florida                      4-3  (57%)
+[05:54:34]   Michigan State               5-4  (56%)
+[05:54:34]   Purdue                       5-4  (56%)
+[05:54:34]   Kansas                       6-5  (55%)
+[05:54:34]   Gonzaga                      2-2  (50%)
+[05:54:34]   Iowa State                   4-4  (50%)
+[05:54:34]   Vanderbilt                   3-3  (50%)
+[05:54:34]   Illinois                     5-5  (50%)
+[05:54:34]   Central Florida              3-3  (50%)
+[05:54:34]   Stanford                     2-2  (50%)
+[05:54:34]   Texas Tech                   5-6  (46%)
+[05:54:34]   Arkansas                     4-5  (44%)
+[05:54:34]   Nebraska                     3-4  (43%)
+[05:54:34]   Georgia                      2-3  (40%)
+[05:54:34] 
+Player origins fetched for 30 of top-30 teams
+[05:54:34] 
+New coaches identified: 10
+[05:54:34] 
+Transfers/key roster moves: 25
+[05:54:34] 
+All files in /Users/josephhardrick/Downloads/Projects/march-madness-bot/data/experiments:
+[05:54:34]   aau_affiliations_2026.csv  (2KB)
+[05:54:34]   coach_changes_2026.csv  (0KB)
+[05:54:34]   experiment_log.txt  (10KB)
+[05:54:34]   player_hometowns_2026.csv  (2KB)
+[05:54:34]   q1_performance_2026.csv  (7KB)
+[05:54:34]   rivalry_q1_performance_2026.csv  (6KB)
+[05:54:34]   transfer_portal_2026.csv  (1KB)
+[05:54:34] 
+=================================================================
+[05:54:34] COMPLETE: 2026-03-09 05:54:34
+[05:54:34] =================================================================

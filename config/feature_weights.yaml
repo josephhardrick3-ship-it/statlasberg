@@ -1,0 +1,97 @@
+contender_score:
+  adj_margin: 0.18
+  adj_defense: 0.15
+  backcourt_experience_score: 0.14
+  turnover_pct: 0.10
+  off_rebound_pct: 0.08
+  def_rebound_pct: 0.08
+  ft_pct: 0.06
+  close_game_record: 0.06
+  last10_adj_margin: 0.05
+  coach_ncaa_games: 0.04
+  avg_age: 0.03
+  region_bias_score: 0.03
+
+upset_risk_score:
+  freshman_guard_minutes_pct: 0.16
+  turnover_pct: 0.15
+  weak_adj_defense: 0.15
+  single_scorer_dependency: 0.10
+  blown_lead_pct: 0.10
+  poor_ft_pct: 0.08
+  low_backcourt_experience: 0.08
+  weak_close_game_record: 0.08
+  bad_travel_profile: 0.05
+  injury_flag: 0.05
+
+guard_play_score:
+  backcourt_experience_score: 0.30
+  assist_turnover_ratio: 0.25
+  guard_ft_pct: 0.20
+  clutch_turnover_rate: 0.15
+  senior_guard_minutes_pct: 0.10
+
+experience_score:
+  avg_age: 0.25
+  senior_minutes_pct: 0.25
+  returning_starters: 0.20
+  returning_minutes_pct: 0.15
+  coach_ncaa_games: 0.15
+
+defense_travel_score:
+  adj_defense: 0.35
+  def_rebound_pct: 0.20
+  opponent_fg_pct: 0.15
+  steal_rate: 0.10
+  block_rate: 0.10
+  road_neutral_record: 0.10
+
+rebounding_score:
+  off_rebound_pct: 0.45
+  def_rebound_pct: 0.35
+  rebound_margin: 0.20
+
+clutch_score:
+  close_game_record: 0.30
+  clutch_ft_pct: 0.20
+  comeback_win_pct: 0.15
+  blown_lead_pct: 0.15
+  clutch_turnover_rate: 0.10
+  final5_ft_pct: 0.10
+
+matchup_score:
+  turnover_edge: 0.25
+  rebound_edge: 0.20
+  guard_experience_edge: 0.20
+  defense_edge: 0.15
+  tempo_edge: 0.10
+  shooting_edge: 0.10
+
+archetype_thresholds:
+  veteran_guard_control:
+    min_backcourt_experience: 70
+    max_turnover_pct: 16.0
+    min_ft_pct: 72.0
+    min_adj_defense_percentile: 40
+  elite_defense_traveler:
+    min_adj_defense_percentile: 85
+    min_def_rebound_pct: 30.0
+    min_road_neutral_win_pct: 0.55
+  balanced_powerhouse:
+    min_adj_offense_percentile: 75
+    min_adj_defense_percentile: 75
+    max_scoring_concentration: 30.0
+  fraud_favorite:
+    min_seed_projection: 1
+    max_seed_projection: 5
+    max_adj_defense_percentile: 40
+    min_turnover_pct: 17.0
+  high_variance_freshman:
+    min_freshman_minutes_pct: 35.0
+    min_freshman_guard_minutes_pct: 25.0
+  dangerous_low_seed:
+    min_seed_projection: 9
+    min_avg_age: 21.0
+    min_adj_defense_percentile: 50
+    min_backcourt_experience: 60
+    min_close_game_win_pct: 0.55

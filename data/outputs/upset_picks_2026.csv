@@ -1,0 +1,13 @@
+region,fav_seed,fav,dog_seed,dog,fav_win_pct,upset_pct
+East,8,Indiana,9,Auburn,53.7,46.3
+East,5,Tennessee,12,Dayton,60.4,39.6
+East,6,Gonzaga,11,Texas,60.7,39.3
+East,7,NC State,10,Vanderbilt,36.6,63.4
+Midwest,8,Marquette,9,Virginia,38.7,61.3
+Midwest,5,BYU,12,New Mexico,29.7,70.3
+Midwest,6,Michigan State,11,Minnesota,64.3,35.7
+South,8,Kansas State,9,Colorado State,53.6,46.4
+South,5,Saint Marys CA,12,Liberty,62.4,37.6
+South,7,Creighton,10,Stanford,40.0,60.0
+West,6,Kentucky,11,Oklahoma,58.4,41.6
+West,7,Oregon,10,San Diego State,42.9,57.1

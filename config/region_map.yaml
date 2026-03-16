@@ -1,0 +1,36 @@
+regions:
+  chicagoland:
+    label: "Chicagoland"
+    states: ["IL"]
+    metros: ["Chicago", "Naperville", "Elgin", "Aurora", "Joliet", "Rockford"]
+    position_bias: guard
+  nyc:
+    label: "NYC / DMV"
+    states: ["NY", "NJ"]
+    metros: ["New York", "Brooklyn", "Bronx", "Newark", "Jersey City", "Queens"]
+    position_bias: guard
+  indiana:
+    label: "Indiana"
+    states: ["IN"]
+    metros: ["Indianapolis", "Fort Wayne", "South Bend", "Gary"]
+    position_bias: guard
+  texas:
+    label: "Texas"
+    states: ["TX"]
+    metros: ["Houston", "Dallas", "San Antonio", "Austin", "Fort Worth"]
+    position_bias: big
+  south:
+    label: "Southern"
+    states: ["GA", "AL", "MS", "LA", "SC", "NC", "TN", "AR", "FL"]
+    metros: []
+    position_bias: big
+  west_coast:
+    label: "West Coast"
+    states: ["CA", "OR", "WA"]
+    metros: ["Los Angeles", "San Francisco", "Oakland", "Portland", "Seattle", "San Diego", "Sacramento"]
+    position_bias: wing
+
+positions:
+  guard: ["PG", "SG", "G", "CG"]
+  wing: ["SF", "SG/SF", "SF/PF", "G/F", "F"]
+  big: ["PF", "C", "PF/C", "F/C"]

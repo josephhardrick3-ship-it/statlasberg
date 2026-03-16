@@ -1,0 +1,577 @@
+season,region,seed,team
+2024,East,1,Connecticut
+2024,East,16,Stetson
+2024,East,8,Florida Atlantic
+2024,East,9,Northwestern
+2024,East,5,San Diego State
+2024,East,12,UAB
+2024,East,4,Auburn
+2024,East,13,Yale
+2024,East,6,BYU
+2024,East,11,Duquesne
+2024,East,3,Illinois
+2024,East,14,Morehead State
+2024,East,7,Washington State
+2024,East,10,Drake
+2024,East,2,Iowa State
+2024,East,15,South Dakota State
+2024,West,1,North Carolina
+2024,West,16,Wagner
+2024,West,8,Mississippi State
+2024,West,9,Michigan State
+2024,West,5,Saint Marys CA
+2024,West,12,Grand Canyon
+2024,West,4,Alabama
+2024,West,13,Charleston
+2024,West,6,Clemson
+2024,West,11,New Mexico
+2024,West,3,Baylor
+2024,West,14,Colgate
+2024,West,7,Dayton
+2024,West,10,Nevada
+2024,West,2,Arizona
+2024,West,15,Long Beach State
+2024,South,1,Houston
+2024,South,16,Longwood
+2024,South,8,Nebraska
+2024,South,9,Texas A&M
+2024,South,5,Wisconsin
+2024,South,12,James Madison
+2024,South,4,Duke
+2024,South,13,Vermont
+2024,South,6,Texas Tech
+2024,South,11,NC State
+2024,South,3,Kentucky
+2024,South,14,Oakland
+2024,South,7,Florida
+2024,South,10,Colorado
+2024,South,2,Marquette
+2024,South,15,Western Kentucky
+2024,Midwest,1,Purdue
+2024,Midwest,16,Montana State
+2024,Midwest,8,Utah State
+2024,Midwest,9,TCU
+2024,Midwest,5,Gonzaga
+2024,Midwest,12,McNeese State
+2024,Midwest,4,Kansas
+2024,Midwest,13,Samford
+2024,Midwest,6,South Carolina
+2024,Midwest,11,Oregon
+2024,Midwest,3,Creighton
+2024,Midwest,14,Akron
+2024,Midwest,7,Texas
+2024,Midwest,10,Colorado State
+2024,Midwest,2,Tennessee
+2024,Midwest,15,Saint Peters
+2023,East,1,Purdue
+2023,East,16,Fairleigh Dickinson
+2023,East,8,Memphis
+2023,East,9,Florida Atlantic
+2023,East,5,Duke
+2023,East,12,Oral Roberts
+2023,East,4,Tennessee
+2023,East,13,Louisiana Lafayette
+2023,East,6,Kentucky
+2023,East,11,Providence
+2023,East,3,Kansas State
+2023,East,14,Montana State
+2023,East,7,Michigan State
+2023,East,10,USC
+2023,East,2,Marquette
+2023,East,15,Vermont
+2023,West,1,Kansas
+2023,West,16,Howard
+2023,West,8,Arkansas
+2023,West,9,Illinois
+2023,West,5,Saint Marys CA
+2023,West,12,VCU
+2023,West,4,Connecticut
+2023,West,13,Iona
+2023,West,6,TCU
+2023,West,11,Arizona State
+2023,West,3,Gonzaga
+2023,West,14,Grand Canyon
+2023,West,7,Northwestern
+2023,West,10,Boise State
+2023,West,2,UCLA
+2023,West,15,UNC Asheville
+2023,South,1,Alabama
+2023,South,16,Texas A&M Corpus Christi
+2023,South,8,Maryland
+2023,South,9,West Virginia
+2023,South,5,San Diego State
+2023,South,12,Charleston
+2023,South,4,Virginia
+2023,South,13,Furman
+2023,South,6,Creighton
+2023,South,11,NC State
+2023,South,3,Baylor
+2023,South,14,UC Santa Barbara
+2023,South,7,Missouri
+2023,South,10,Utah State
+2023,South,2,Arizona
+2023,South,15,Princeton
+2023,Midwest,1,Houston
+2023,Midwest,16,Northern Kentucky
+2023,Midwest,8,Iowa
+2023,Midwest,9,Auburn
+2023,Midwest,5,Miami FL
+2023,Midwest,12,Drake
+2023,Midwest,4,Indiana
+2023,Midwest,13,Kent State
+2023,Midwest,6,Iowa State
+2023,Midwest,11,Mississippi State
+2023,Midwest,3,Xavier
+2023,Midwest,14,Kennesaw State
+2023,Midwest,7,Texas A&M
+2023,Midwest,10,Penn State
+2023,Midwest,2,Texas
+2023,Midwest,15,Colgate
+2022,East,1,Baylor
+2022,East,16,Norfolk State
+2022,East,8,North Carolina
+2022,East,9,Marquette
+2022,East,5,Saint Marys CA
+2022,East,12,Indiana
+2022,East,4,UCLA
+2022,East,13,Akron
+2022,East,6,Texas Tech
+2022,East,11,Notre Dame
+2022,East,3,Purdue
+2022,East,14,Yale
+2022,East,7,Murray State
+2022,East,10,San Francisco
+2022,East,2,Kentucky
+2022,East,15,Saint Peters
+2022,West,1,Gonzaga
+2022,West,16,Georgia State
+2022,West,8,Boise State
+2022,West,9,Memphis
+2022,West,5,Connecticut
+2022,West,12,New Mexico State
+2022,West,4,Arkansas
+2022,West,13,Vermont
+2022,West,6,Alabama
+2022,West,11,Notre Dame
+2022,West,3,Texas Tech
+2022,West,14,Montana State
+2022,West,7,Michigan State
+2022,West,10,Davidson
+2022,West,2,Duke
+2022,West,15,Cal State Fullerton
+2022,South,1,Arizona
+2022,South,16,Wright State
+2022,South,8,Seton Hall
+2022,South,9,TCU
+2022,South,5,Houston
+2022,South,12,UAB
+2022,South,4,Illinois
+2022,South,13,Chattanooga
+2022,South,6,Colorado State
+2022,South,11,Michigan
+2022,South,3,Tennessee
+2022,South,14,Longwood
+2022,South,7,Ohio State
+2022,South,10,Loyola Chicago
+2022,South,2,Villanova
+2022,South,15,Delaware
+2022,Midwest,1,Kansas
+2022,Midwest,16,Texas Southern
+2022,Midwest,8,San Diego State
+2022,Midwest,9,Creighton
+2022,Midwest,5,Iowa
+2022,Midwest,12,Richmond
+2022,Midwest,4,Providence
+2022,Midwest,13,South Dakota State
+2022,Midwest,6,LSU
+2022,Midwest,11,Iowa State
+2022,Midwest,3,Wisconsin
+2022,Midwest,14,Colgate
+2022,Midwest,7,USC
+2022,Midwest,10,Miami FL
+2022,Midwest,2,Auburn
+2022,Midwest,15,Jacksonville State
+2021,East,1,Michigan
+2021,East,16,Texas Southern
+2021,East,8,LSU
+2021,East,9,St Bonaventure
+2021,East,5,Colorado
+2021,East,12,Georgetown
+2021,East,4,Florida State
+2021,East,13,UNC Greensboro
+2021,East,6,BYU
+2021,East,11,Michigan State
+2021,East,3,Texas
+2021,East,14,Abilene Christian
+2021,East,7,Connecticut
+2021,East,10,Maryland
+2021,East,2,Alabama
+2021,East,15,Iona
+2021,West,1,Gonzaga
+2021,West,16,Norfolk State
+2021,West,8,Oklahoma
+2021,West,9,Missouri
+2021,West,5,Creighton
+2021,West,12,UC Santa Barbara
+2021,West,4,Virginia
+2021,West,13,Ohio
+2021,West,6,USC
+2021,West,11,Drake
+2021,West,3,Kansas
+2021,West,14,Eastern Washington
+2021,West,7,Oregon
+2021,West,10,VCU
+2021,West,2,Iowa
+2021,West,15,Grand Canyon
+2021,South,1,Baylor
+2021,South,16,Hartford
+2021,South,8,North Carolina
+2021,South,9,Wisconsin
+2021,South,5,Villanova
+2021,South,12,Winthrop
+2021,South,4,Purdue
+2021,South,13,North Texas
+2021,South,6,Texas Tech
+2021,South,11,Utah State
+2021,South,3,Arkansas
+2021,South,14,Colgate
+2021,South,7,Florida
+2021,South,10,Virginia Tech
+2021,South,2,Ohio State
+2021,South,15,Oral Roberts
+2021,Midwest,1,Illinois
+2021,Midwest,16,Drexel
+2021,Midwest,8,Loyola Chicago
+2021,Midwest,9,Georgia Tech
+2021,Midwest,5,Tennessee
+2021,Midwest,12,Oregon State
+2021,Midwest,4,Oklahoma State
+2021,Midwest,13,Liberty
+2021,Midwest,6,San Diego State
+2021,Midwest,11,Syracuse
+2021,Midwest,3,West Virginia
+2021,Midwest,14,Morehead State
+2021,Midwest,7,Clemson
+2021,Midwest,10,Rutgers
+2021,Midwest,2,Houston
+2021,Midwest,15,Cleveland State
+2019,East,1,Duke
+2019,East,16,North Dakota State
+2019,East,8,VCU
+2019,East,9,UCF
+2019,East,5,Mississippi State
+2019,East,12,Liberty
+2019,East,4,Virginia Tech
+2019,East,13,Saint Louis
+2019,East,6,Maryland
+2019,East,11,Temple
+2019,East,3,LSU
+2019,East,14,Yale
+2019,East,7,Louisville
+2019,East,10,Minnesota
+2019,East,2,Michigan State
+2019,East,15,Bradley
+2019,West,1,Gonzaga
+2019,West,16,Fairleigh Dickinson
+2019,West,8,Syracuse
+2019,West,9,Baylor
+2019,West,5,Marquette
+2019,West,12,Murray State
+2019,West,4,Florida State
+2019,West,13,Vermont
+2019,West,6,Buffalo
+2019,West,11,Arizona State
+2019,West,3,Texas Tech
+2019,West,14,Northern Kentucky
+2019,West,7,Nevada
+2019,West,10,Florida
+2019,West,2,Michigan
+2019,West,15,Montana
+2019,South,1,Virginia
+2019,South,16,Gardner Webb
+2019,South,8,Mississippi State
+2019,South,9,Oklahoma
+2019,South,5,Wisconsin
+2019,South,12,Oregon
+2019,South,4,Kansas State
+2019,South,13,UC Irvine
+2019,South,6,Villanova
+2019,South,11,Saint Marys CA
+2019,South,3,Purdue
+2019,South,14,Old Dominion
+2019,South,7,Cincinnati
+2019,South,10,Iowa
+2019,South,2,Tennessee
+2019,South,15,Colgate
+2019,Midwest,1,North Carolina
+2019,Midwest,16,Iona
+2019,Midwest,8,Utah State
+2019,Midwest,9,Washington
+2019,Midwest,5,Auburn
+2019,Midwest,12,New Mexico State
+2019,Midwest,4,Kansas
+2019,Midwest,13,Northeastern
+2019,Midwest,6,Iowa State
+2019,Midwest,11,Ohio State
+2019,Midwest,3,Houston
+2019,Midwest,14,Georgia State
+2019,Midwest,7,Wofford
+2019,Midwest,10,Seton Hall
+2019,Midwest,2,Kentucky
+2019,Midwest,15,Abilene Christian
+2018,East,1,Villanova
+2018,East,16,Radford
+2018,East,8,Virginia Tech
+2018,East,9,Alabama
+2018,East,5,West Virginia
+2018,East,12,Murray State
+2018,East,4,Wichita State
+2018,East,13,Marshall
+2018,East,6,Florida
+2018,East,11,St Bonaventure
+2018,East,3,Michigan
+2018,East,14,Montana
+2018,East,7,Rhode Island
+2018,East,10,Oklahoma
+2018,East,2,Purdue
+2018,East,15,Cal State Fullerton
+2018,West,1,Xavier
+2018,West,16,Texas Southern
+2018,West,8,Missouri
+2018,West,9,Florida State
+2018,West,5,Ohio State
+2018,West,12,South Dakota State
+2018,West,4,Gonzaga
+2018,West,13,UNC Greensboro
+2018,West,6,Houston
+2018,West,11,San Diego State
+2018,West,3,Michigan State
+2018,West,14,Bucknell
+2018,West,7,Nevada
+2018,West,10,Texas
+2018,West,2,Cincinnati
+2018,West,15,Georgia State
+2018,South,1,Virginia
+2018,South,16,UMBC
+2018,South,8,Creighton
+2018,South,9,Kansas State
+2018,South,5,Kentucky
+2018,South,12,Davidson
+2018,South,4,Arizona
+2018,South,13,Buffalo
+2018,South,6,Miami FL
+2018,South,11,Loyola Chicago
+2018,South,3,Tennessee
+2018,South,14,Wright State
+2018,South,7,Nevada
+2018,South,10,Texas
+2018,South,2,Cincinnati
+2018,South,15,Georgia State
+2018,Midwest,1,Kansas
+2018,Midwest,16,Penn
+2018,Midwest,8,Seton Hall
+2018,Midwest,9,NC State
+2018,Midwest,5,Clemson
+2018,Midwest,12,New Mexico State
+2018,Midwest,4,Auburn
+2018,Midwest,13,College of Charleston
+2018,Midwest,6,TCU
+2018,Midwest,11,Syracuse
+2018,Midwest,3,Michigan State
+2018,Midwest,14,Bucknell
+2018,Midwest,7,Nevada
+2018,Midwest,10,Texas
+2018,Midwest,2,Duke
+2018,Midwest,15,Iona
+2017,East,1,Villanova
+2017,East,16,Mount St Marys
+2017,East,8,Wisconsin
+2017,East,9,Virginia Tech
+2017,East,5,Virginia
+2017,East,12,UNC Wilmington
+2017,East,4,Florida
+2017,East,13,ETSU
+2017,East,6,SMU
+2017,East,11,Providence
+2017,East,3,Baylor
+2017,East,14,New Mexico State
+2017,East,7,South Carolina
+2017,East,10,Marquette
+2017,East,2,Duke
+2017,East,15,Troy
+2017,West,1,Gonzaga
+2017,West,16,South Dakota State
+2017,West,8,Northwestern
+2017,West,9,Vanderbilt
+2017,West,5,Notre Dame
+2017,West,12,Princeton
+2017,West,4,West Virginia
+2017,West,13,Bucknell
+2017,West,6,Maryland
+2017,West,11,Xavier
+2017,West,3,Florida State
+2017,West,14,FGCU
+2017,West,7,Saint Marys CA
+2017,West,10,VCU
+2017,West,2,Arizona
+2017,West,15,North Dakota
+2017,South,1,North Carolina
+2017,South,16,Texas Southern
+2017,South,8,Arkansas
+2017,South,9,Seton Hall
+2017,South,5,Minnesota
+2017,South,12,Middle Tennessee
+2017,South,4,Butler
+2017,South,13,Winthrop
+2017,South,6,Cincinnati
+2017,South,11,Kansas State
+2017,South,3,UCLA
+2017,South,14,Kent State
+2017,South,7,Dayton
+2017,South,10,Wichita State
+2017,South,2,Kentucky
+2017,South,15,Northern Kentucky
+2017,Midwest,1,Kansas
+2017,Midwest,16,UC Davis
+2017,Midwest,8,Miami FL
+2017,Midwest,9,Michigan State
+2017,Midwest,5,Iowa State
+2017,Midwest,12,Nevada
+2017,Midwest,4,Purdue
+2017,Midwest,13,Vermont
+2017,Midwest,6,Creighton
+2017,Midwest,11,Rhode Island
+2017,Midwest,3,Oregon
+2017,Midwest,14,Iona
+2017,Midwest,7,Michigan
+2017,Midwest,10,Oklahoma State
+2017,Midwest,2,Louisville
+2017,Midwest,15,Jacksonville State
+2016,East,1,North Carolina
+2016,East,16,Florida Gulf Coast
+2016,East,8,USC
+2016,East,9,Providence
+2016,East,5,Indiana
+2016,East,12,Chattanooga
+2016,East,4,Kentucky
+2016,East,13,Stony Brook
+2016,East,6,Notre Dame
+2016,East,11,Michigan
+2016,East,3,West Virginia
+2016,East,14,Stephen F Austin
+2016,East,7,Wisconsin
+2016,East,10,Pittsburgh
+2016,East,2,Villanova
+2016,East,15,UNC Asheville
+2016,West,1,Oregon
+2016,West,16,Holy Cross
+2016,West,8,St Josephs PA
+2016,West,9,Cincinnati
+2016,West,5,Baylor
+2016,West,12,Yale
+2016,West,4,Duke
+2016,West,13,UCSB
+2016,West,6,Texas
+2016,West,11,Northern Iowa
+2016,West,3,Texas A&M
+2016,West,14,Green Bay
+2016,West,7,Oregon State
+2016,West,10,VCU
+2016,West,2,Oklahoma
+2016,West,15,Cal State Bakersfield
+2016,South,1,Kansas
+2016,South,16,Austin Peay
+2016,South,8,Colorado
+2016,South,9,Connecticut
+2016,South,5,Maryland
+2016,South,12,South Dakota State
+2016,South,4,California
+2016,South,13,Hawaii
+2016,South,6,Arizona
+2016,South,11,Wichita State
+2016,South,3,Miami FL
+2016,South,14,Buffalo
+2016,South,7,Iowa
+2016,South,10,Temple
+2016,South,2,Villanova
+2016,South,15,UNC Asheville
+2016,Midwest,1,Virginia
+2016,Midwest,16,Hampton
+2016,Midwest,8,Butler
+2016,Midwest,9,Texas Tech
+2016,Midwest,5,Purdue
+2016,Midwest,12,Little Rock
+2016,Midwest,4,Iowa State
+2016,Midwest,13,Iona
+2016,Midwest,6,Seton Hall
+2016,Midwest,11,Gonzaga
+2016,Midwest,3,Utah
+2016,Midwest,14,Fresno State
+2016,Midwest,7,Dayton
+2016,Midwest,10,Syracuse
+2016,Midwest,2,Michigan State
+2016,Midwest,15,Middle Tennessee
+2015,East,1,Villanova
+2015,East,16,Lafayette
+2015,East,8,NC State
+2015,East,9,LSU
+2015,East,5,Valparaiso
+2015,East,12,Valparaiso
+2015,East,4,Louisville
+2015,East,13,UC Irvine
+2015,East,6,Providence
+2015,East,11,Dayton
+2015,East,3,Oklahoma
+2015,East,14,Albany
+2015,East,7,Wichita State
+2015,East,10,Indiana
+2015,East,2,Virginia
+2015,East,15,Belmont
+2015,West,1,Gonzaga
+2015,West,16,North Dakota State
+2015,West,8,Oregon
+2015,West,9,Oklahoma State
+2015,West,5,Utah
+2015,West,12,Stephen F Austin
+2015,West,4,Duke
+2015,West,13,Robert Morris
+2015,West,6,San Diego State
+2015,West,11,St Josephs PA
+2015,West,3,Iowa State
+2015,West,14,UAB
+2015,West,7,Baylor
+2015,West,10,Georgia State
+2015,West,2,Arizona
+2015,West,15,Texas Southern
+2015,South,1,Duke
+2015,South,16,Robert Morris
+2015,South,8,San Diego State
+2015,South,9,St Josephs PA
+2015,South,5,Utah
+2015,South,12,Stephen F Austin
+2015,South,4,Georgetown
+2015,South,13,Eastern Washington
+2015,South,6,SMU
+2015,South,11,UCLA
+2015,South,3,Iowa State
+2015,South,14,UAB
+2015,South,7,DeAnza
+2015,South,10,Georgia State
+2015,South,2,Gonzaga
+2015,South,15,North Dakota State
+2015,Midwest,1,Kentucky
+2015,Midwest,16,Hampton
+2015,Midwest,8,Cincinnati
+2015,Midwest,9,Purdue
+2015,Midwest,5,West Virginia
+2015,Midwest,12,Buffalo
+2015,Midwest,4,Maryland
+2015,Midwest,13,Valparaiso
+2015,Midwest,6,Butler
+2015,Midwest,11,Texas
+2015,Midwest,3,Notre Dame
+2015,Midwest,14,Northeastern
+2015,Midwest,7,Wichita State
+2015,Midwest,10,Indiana
+2015,Midwest,2,Kansas
+2015,Midwest,15,New Mexico State
