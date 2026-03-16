@@ -7,11 +7,11 @@ season,region,seed,team
 2026,East,6,Louisville
 2026,East,7,UCLA
 2026,East,8,Ohio State
-2026,East,9,TCU
-2026,East,10,UCF
+2026,East,9,Texas Christian
+2026,East,10,Central Florida
 2026,East,11,South Florida
 2026,East,12,Northern Iowa
-2026,East,13,Cal Baptist
+2026,East,13,California Baptist
 2026,East,14,North Dakota State
 2026,East,15,Furman
 2026,East,16,Siena
@@ -21,14 +21,14 @@ season,region,seed,team
 2026,South,4,Nebraska
 2026,South,5,Vanderbilt
 2026,South,6,North Carolina
-2026,South,7,Saint Marys CA
+2026,South,7,Saint Mary's
 2026,South,8,Clemson
 2026,South,9,Iowa
 2026,South,10,Texas A&M
 2026,South,11,Virginia Commonwealth
 2026,South,12,McNeese State
 2026,South,13,Troy
-2026,South,14,Penn
+2026,South,14,Pennsylvania
 2026,South,15,Idaho
 2026,South,16,Prairie View
 2026,West,1,Arizona
@@ -36,8 +36,8 @@ season,region,seed,team
 2026,West,3,Gonzaga
 2026,West,4,Arkansas
 2026,West,5,Wisconsin
-2026,West,6,BYU
-2026,West,7,Miami FL
+2026,West,6,Brigham Young
+2026,West,7,Miami
 2026,West,8,Villanova
 2026,West,9,Utah State
 2026,West,10,Missouri
@@ -46,7 +46,7 @@ season,region,seed,team
 2026,West,13,Hawaii
 2026,West,14,Kennesaw State
 2026,West,15,Queens
-2026,West,16,LIU
+2026,West,16,Long Island University
 2026,Midwest,1,Michigan
 2026,Midwest,2,Iowa State
 2026,Midwest,3,Virginia
@@ -57,9 +57,9 @@ season,region,seed,team
 2026,Midwest,8,Georgia
 2026,Midwest,9,Saint Louis
 2026,Midwest,10,Santa Clara
-2026,Midwest,11,SMU
+2026,Midwest,11,Southern Methodist
 2026,Midwest,12,Akron
 2026,Midwest,13,Hofstra
 2026,Midwest,14,Wright State
 2026,Midwest,15,Tennessee State
-2026,Midwest,16,UMBC
+2026,Midwest,16,Maryland-Baltimore County
