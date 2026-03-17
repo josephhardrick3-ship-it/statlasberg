@@ -16,6 +16,19 @@ try:
 except ImportError:
     _REQUESTS_OK = False
 
+try:
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    from src.models.classify_archetypes import (
+        classify_vulnerabilities, classify_strengths, get_matchup_arc
+    )
+    _ARCHETYPES_OK = True
+except Exception:
+    _ARCHETYPES_OK = False
+    def classify_vulnerabilities(_row): return []
+    def classify_strengths(_row):       return []
+    def get_matchup_arc(_r1, _r2):      return ""
+
 st.set_page_config(
     page_title="Statlasberg",
     page_icon="🏀",
@@ -198,31 +211,23 @@ def hot_label(row_s):
     return ""
 
 def style_matchup_insight(t1, t2):
-    """One-line style matchup narrative."""
+    """Archetype-driven matchup narrative — delegates to the full matchup matrix."""
+    arc = get_matchup_arc(dict(t1), dict(t2))
+    if arc:
+        return arc
+    # bare sub-score fallback if archetypes not loaded
     def fv(r, k, d=0.0):
         try: return float(r.get(k, d) or d)
         except: return d
-    pace1, pace2 = fv(t1,"tempo",68), fv(t2,"tempo",68)
-    thr_off2_raw = fv(t2,"three_pt_pct",33)
-    thr_off2 = thr_off2_raw if thr_off2_raw > 1 else thr_off2_raw*100
-    thr_def1 = fv(t1,"opp_three_pt_pct",33)
     guard1, guard2 = fv(t1,"guard_play_score",50), fv(t2,"guard_play_score",50)
-    def1, def2 = fv(t1,"defense_score",50), fv(t2,"defense_score",50)
+    def1,   def2   = fv(t1,"defense_score",50),    fv(t2,"defense_score",50)
     n1, n2 = t1.get("team","Team A"), t2.get("team","Team B")
-
-    if abs(pace1 - pace2) > 5:
-        faster = n1 if pace1 > pace2 else n2
-        slower = n2 if pace1 > pace2 else n1
-        return f"⚡ Pace war — {faster} wants to run, {slower} wants to grind"
-    if thr_off2 > 38 and thr_def1 < 32:
-        return f"🎯 {n2}'s 3PT attack ({thr_off2:.0f}%) exploits {n1}'s porous perimeter D"
+    if abs(def1 - def2) > 15:
+        return f"🛡 {'Defense' if def1>def2 else n2+' defense'} controls the pace here"
     if abs(guard1 - guard2) > 12:
         edge = n1 if guard1 > guard2 else n2
         return f"🏀 Clear backcourt edge for {edge} — guard play decides this one"
-    if abs(def1 - def2) > 15:
-        def_team = n1 if def1 > def2 else n2
-        return f"🛡️ {def_team}'s elite defense controls the tempo"
-    return "⚖️ Balanced matchup — execution and momentum win this one"
+    return "⚖️ Evenly matched — execution and one momentum run decides this"
 
 def safe_f(v, d=0.0):
     try: return float(v) if pd.notna(v) and v != '' else d
@@ -750,7 +755,59 @@ with tab3:
     m3.metric("Record",           f"{safe_i(row.get('wins'))}-{safe_i(row.get('losses'))}")
     m4.metric("NET Rank",         f"#{safe_i(row.get('net_rank'))}" if pd.notna(row.get('net_rank')) else "N/A")
     m5.metric("Adj. Margin",      f"+{safe_f(row.get('adj_margin')):.1f}" if safe_f(row.get('adj_margin'))>0 else f"{safe_f(row.get('adj_margin')):.1f}")
-    m6.metric("Archetype",        row.get("archetype","—") or "—")
+    m6.metric("Pred. Round",      row.get("sim_round", row.get("expected_round","—")) or "—")
+
+    # ── Advanced Stats Row ────────────────────────────────────────────────────
+    adv_cols = st.columns(5)
+    adj_off_v  = safe_f(row.get("adj_offense"))
+    adj_def_v  = safe_f(row.get("adj_defense"))
+    tempo_v    = safe_f(row.get("tempo"))
+    three_pa_v = safe_f(row.get("three_pa_rate"))
+    ft_rate_v  = safe_f(row.get("ft_rate"))
+    to_pct_v   = safe_f(row.get("turnover_pct"))
+    adv_cols[0].metric("Adj. Offense",   f"{adj_off_v:.1f}" if adj_off_v > 0 else "—")
+    adv_cols[1].metric("Adj. Defense",   f"{adj_def_v:.1f}" if adj_def_v > 0 else "—",
+                       help="Lower = better; D1 avg ≈ 100")
+    adv_cols[2].metric("Tempo (poss/g)", f"{tempo_v:.0f}" if tempo_v > 55 else "—")
+    adv_cols[3].metric("3PA Rate",       f"{three_pa_v:.1f}/g" if three_pa_v > 0 else "—")
+    adv_cols[4].metric("TO Rate",        f"{to_pct_v*100:.1f}%" if to_pct_v > 0 else "—")
+
+    # ── Archetype Banner ──────────────────────────────────────────────────────
+    arch       = row.get("archetype", "Solid Tournament Team") or "Solid Tournament Team"
+    row_dict   = dict(row)
+    vuln_list  = [t for t in (row.get("vuln_tags", "") or "").split(" | ") if t.strip()] \
+                 or classify_vulnerabilities(row_dict)
+    str_list   = [t for t in (row.get("strength_tags", "") or "").split(" | ") if t.strip()] \
+                 or classify_strengths(row_dict)
+
+    ARCH_COLORS = {
+        "Blue-Blood Dominant":   ("#7c3aed", "#ede9fe"),
+        "Grind-It-Out Defense":  ("#0284c7", "#e0f2fe"),
+        "Veteran Control":       ("#0891b2", "#ecfeff"),
+        "Pace-and-Space Gunners":("#ea580c", "#fff7ed"),
+        "Glass & Paint":         ("#4d7c0f", "#f7fee7"),
+        "Cinderella Profile":    ("#db2777", "#fdf2f8"),
+        "One-Man Show":          ("#d97706", "#fffbeb"),
+        "Freshman Loaded":       ("#dc2626", "#fef2f2"),
+        "Résumé Builder":        ("#9ca3af", "#f9fafb"),
+    }
+    a_bg, a_txt = ARCH_COLORS.get(arch, ("#374151", "#f1f5f9"))
+    str_html  = "".join(f'<span style="background:#14532d;color:#86efac;border-radius:4px;padding:2px 8px;font-size:0.78rem;margin:2px">{s}</span>' for s in str_list)
+    vuln_html = "".join(f'<span style="background:#450a0a;color:#fca5a5;border-radius:4px;padding:2px 8px;font-size:0.78rem;margin:2px">{v}</span>' for v in vuln_list)
+
+    st.markdown(
+        f'<div style="background:#1a1f2e;border:1px solid #374151;border-radius:10px;padding:12px 16px;margin:8px 0">'
+        f'<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">'
+        f'<span style="background:{a_bg};color:{a_txt};border-radius:6px;padding:4px 12px;font-weight:800;font-size:0.95rem">{arch}</span>'
+        f'</div>'
+        f'<div style="margin-bottom:6px">'
+        f'<span style="color:#4ade80;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em">WHAT THEY BRING &nbsp;</span>{str_html}'
+        f'</div>'
+        f'<div>'
+        f'<span style="color:#f87171;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em">WATCH OUT FOR &nbsp;</span>{vuln_html}'
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True)
 
     st.markdown("---")
     left_col, right_col = st.columns([1, 1])
@@ -1225,32 +1282,75 @@ with tab6:
                         for msg in flag_msgs:
                             st.markdown(f'<small style="color:#f87171">{msg}</small>', unsafe_allow_html=True)
 
-                        # Log result buttons
+                        # ── Log result + user pick ───────────────────────────────────
                         if not result_winner:
                             st.markdown("---")
-                            st.markdown('<small style="color:#94a3b8">Log result to track model accuracy:</small>', unsafe_allow_html=True)
+                            st.markdown('<small style="color:#94a3b8">Log result:</small>', unsafe_allow_html=True)
                             rb1, rb2 = st.columns(2)
+
+                            # Optional: user's own pick (if they disagreed with model)
+                            user_disagree = st.checkbox(
+                                f"🙅 I had the other team",
+                                key=f"dis_{matchup_key}",
+                                help="Check if you disagreed with Statlasberg's pick")
+                            user_pick_val = None
+                            user_note_val = ""
+                            if user_disagree:
+                                dog_team = t2["team"] if fav["team"] == t1["team"] else t1["team"]
+                                user_pick_val = dog_team
+                                user_note_val = st.text_input(
+                                    "Why? (optional — Statlasberg will analyze it after):",
+                                    key=f"unote_{matchup_key}",
+                                    placeholder="e.g. better guard matchup, they're peaking at the right time…")
+
+                            def _log_result(winner_team):
+                                rec = {
+                                    "matchup":    matchup_key,
+                                    "winner":     winner_team,
+                                    "teams":      [t1["team"], t2["team"]],
+                                    "model_pick": fav["team"],
+                                    "fav_team":   fav["team"],
+                                    "user_pick":  user_pick_val,
+                                    "user_note":  user_note_val,
+                                    "timestamp":  str(datetime.now().date())}
+                                st.session_state.results.append(rec)
+                                os.makedirs("data/tournament_2026", exist_ok=True)
+                                pd.DataFrame(st.session_state.results).to_csv(RESULTS_PATH, index=False)
+                                st.rerun()
+
                             if rb1.button(f"✅ {t1['team']} won", key=f"r1_{matchup_key}"):
-                                rec = {"matchup": matchup_key, "winner": t1["team"],
-                                       "teams": [t1["team"], t2["team"]],
-                                       "model_pick": fav["team"],
-                                       "fav_team": fav["team"], "timestamp": str(datetime.now().date())}
-                                st.session_state.results.append(rec)
-                                os.makedirs("data/tournament_2026", exist_ok=True)
-                                pd.DataFrame(st.session_state.results).to_csv(RESULTS_PATH, index=False)
-                                st.rerun()
+                                _log_result(t1["team"])
                             if rb2.button(f"✅ {t2['team']} won", key=f"r2_{matchup_key}"):
-                                rec = {"matchup": matchup_key, "winner": t2["team"],
-                                       "teams": [t1["team"], t2["team"]],
-                                       "model_pick": fav["team"],
-                                       "fav_team": fav["team"], "timestamp": str(datetime.now().date())}
-                                st.session_state.results.append(rec)
-                                os.makedirs("data/tournament_2026", exist_ok=True)
-                                pd.DataFrame(st.session_state.results).to_csv(RESULTS_PATH, index=False)
-                                st.rerun()
+                                _log_result(t2["team"])
+
                         else:
-                            correct_str = "✅ Correct call!" if result_winner == fav["team"] else "❌ Upset occurred"
-                            st.markdown(f'<div style="background:#1e293b;border-radius:6px;padding:6px 10px;margin-top:6px"><strong style="color:#f1f5f9">Result logged: {result_winner} won — {correct_str}</strong></div>', unsafe_allow_html=True)
+                            correct_str   = "✅ Called it." if result_winner == fav["team"] else "❌ Wrong."
+                            user_pick_rec = result_rec.get("user_pick")
+                            user_note_rec = result_rec.get("user_note", "")
+
+                            # Model verdict line
+                            st.markdown(
+                                f'<div style="background:#1e293b;border-radius:6px;padding:6px 10px;margin-top:6px">'
+                                f'<strong style="color:#f1f5f9">Result: {result_winner} won — Statlasberg {correct_str}</strong>'
+                                f'</div>', unsafe_allow_html=True)
+
+                            # User pick verdict (shown when they logged a disagreement)
+                            if user_pick_rec:
+                                user_correct = (user_pick_rec == result_winner)
+                                u_icon = "✅" if user_correct else "❌"
+                                if user_correct and result_winner != fav["team"]:
+                                    u_verdict = "You were right, I was wrong. Good call."
+                                elif not user_correct and result_winner == fav["team"]:
+                                    u_verdict = "I was right, you were wrong. Trust the model."
+                                else:
+                                    u_verdict = "We were both wrong. March Madness things."
+                                note_line = f'<br/><span style="color:#94a3b8;font-size:0.78rem">Your reasoning: <em>"{user_note_rec}"</em></span>' if user_note_rec else ""
+                                st.markdown(
+                                    f'<div style="background:#172233;border-left:3px solid {"#4ade80" if user_correct else "#f87171"};'
+                                    f'border-radius:4px;padding:6px 10px;margin-top:4px;font-size:0.85rem">'
+                                    f'{u_icon} <strong style="color:#f1f5f9">Your pick: {user_pick_rec}</strong> — {u_verdict}'
+                                    f'{note_line}</div>', unsafe_allow_html=True)
+
                             if st.button("↩ Clear result", key=f"clr_{matchup_key}"):
                                 st.session_state.results = [r for r in st.session_state.results if r["matchup"] != matchup_key]
                                 st.rerun()
@@ -1685,6 +1785,71 @@ def statlasberg_qa(q, bkt_df, s16, e8, ff, champion, champs_df, results_list=Non
                        "Ask me 'where were you wrong?' and I'll break down the misses.")
         return f"📊 **{acc:.0f}% hit rate** — {verdict}"
 
+    # ── How are MY picks doing (user vs model) ────────────────────────────────
+    user_picks_logged = [r for r in results_list if r.get("user_pick")]
+    if any(w in q_low for w in ["my picks", "my record", "how did i do", "my accuracy",
+                                  "my hit rate", "am i right", "how am i doing"]):
+        if not user_picks_logged:
+            return ("You haven't logged any disagreements yet. "
+                    "In the **🏆 Bracket** tab, check '🙅 I had the other team' when you disagree with me, "
+                    "then log the result. I'll track your record vs mine.")
+        u_right  = [r for r in user_picks_logged if r.get("user_pick") == r.get("winner")]
+        u_wrong  = [r for r in user_picks_logged if r.get("user_pick") != r.get("winner")]
+        u_beat_m = [r for r in user_picks_logged
+                    if r.get("user_pick") == r.get("winner") and r.get("model_pick") != r.get("winner")]
+        m_beat_u = [r for r in user_picks_logged
+                    if r.get("model_pick") == r.get("winner") and r.get("user_pick") != r.get("winner")]
+        u_acc    = len(u_right) / len(user_picks_logged) * 100
+        lines    = [f"📊 **Your record on disagreements: {len(u_right)}-{len(u_wrong)} ({u_acc:.0f}%)**"]
+        if u_beat_m:
+            lines.append(f"\n✅ **You beat me on:** {', '.join(r['winner'] for r in u_beat_m)} — good reads.")
+        if m_beat_u:
+            lines.append(f"\n❌ **I beat you on:** {', '.join(r['winner'] for r in m_beat_u)} — trust the model.")
+        if not u_beat_m and not m_beat_u:
+            lines.append("\nNeither of us had it. Basketball.")
+        return " ".join(lines)
+
+    # ── Where did I beat you ──────────────────────────────────────────────────
+    if any(w in q_low for w in ["where did i beat you", "where was i right", "my correct picks",
+                                  "when was i right", "i was right"]):
+        u_beat_m = [r for r in results_list
+                    if r.get("user_pick") and
+                    r.get("user_pick") == r.get("winner") and
+                    r.get("model_pick") != r.get("winner")]
+        if not u_beat_m:
+            return "No logged disagreements where you were right and I was wrong — yet."
+        lines = []
+        for r in u_beat_m:
+            label, explanation = _diagnose_miss(r["model_pick"], r["winner"], bkt_df)
+            note = r.get("user_note", "")
+            note_line = f'\n*Your reasoning: "{note}"* — ' if note else ""
+            lines.append(
+                f"✅ **{r['winner']}** (you had them, I had {r['model_pick']}) · `{label}`\n"
+                f"{note_line}{explanation}")
+        return (f"🎯 **{len(u_beat_m)} time(s) you saw it better than me:**\n\n"
+                + "\n\n---\n\n".join(lines))
+
+    # ── Analyze my reasoning on a specific game ───────────────────────────────
+    if any(w in q_low for w in ["analyze my reasoning", "my reasoning", "why did i think",
+                                  "was i right to think", "look at my pick on"]):
+        # Find game with user note that matches a team name in the question
+        for r in [x for x in results_list if x.get("user_note")]:
+            for t in r.get("teams", []):
+                if t.lower() in q_low or any(w in t.lower() for w in q_low.split() if len(w) >= 4):
+                    winner   = r.get("winner", "")
+                    u_pick   = r.get("user_pick", "")
+                    m_pick   = r.get("model_pick", "")
+                    note     = r.get("user_note", "")
+                    u_right  = (u_pick == winner)
+                    label, explanation = _diagnose_miss(m_pick, winner, bkt_df) if m_pick != winner else ("CORRECT", "")
+                    verdict  = "✅ Right call." if u_right else "❌ Wrong call."
+                    my_side  = f"I had **{m_pick}**. {'Called it too.' if m_pick == winner else f'I was wrong — {explanation}'}"
+                    return (f"🔍 **Your reasoning on {t}**: *\"{note}\"*\n\n"
+                            f"{verdict} **{winner}** won.\n\n"
+                            f"{my_side}")
+        return ("Give me a team name so I can find the right game — "
+                "e.g. *Analyze my reasoning on Auburn*.")
+
     # ── Miss autopsy — where were you wrong ──────────────────────────────────
     if any(w in q_low for w in ["where were you wrong", "where'd you miss", "your misses",
                                   "bad picks", "wrong picks", "blew it", "got wrong"]):
@@ -2094,11 +2259,11 @@ with tab8:
     # Suggestion chips
     suggestions = [
         "Who is your champion pick?",
-        "What's your Final Four?",
         "Best upset picks?",
         "Who should I fade?",
         "Where were you wrong?",
-        "How are your picks doing?",
+        "Where did I beat you?",
+        "How are my picks doing?",
     ]
     chip_cols = st.columns(len(suggestions))
     for i, sug in enumerate(suggestions):
@@ -2119,7 +2284,7 @@ with tab8:
                 st.markdown(msg["content"])
 
     # Chat input
-    if user_q := st.chat_input("Ask about teams, matchups, upsets, the champion pick…"):
+    if user_q := st.chat_input("Ask about picks, matchups, or try: 'Where did I beat you?' / 'Analyze my reasoning on Auburn'"):
         st.session_state.chat_history.append({"role": "user", "content": user_q})
         with st.spinner("Thinking…"):
             response = statlasberg_qa(user_q, in_bracket, sim_s16, sim_e8, sim_ff,
