@@ -394,13 +394,19 @@ if "results" not in st.session_state:
         st.session_state.results = []
 results_dict = {r["matchup"]: r for r in st.session_state.results}
 
+# Session state for deep-dive navigation and chat
+if "dive_team" not in st.session_state:
+    st.session_state.dive_team = None
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 🏀 Statlasberg")
     st.markdown("*2026 March Madness Intelligence*")
     st.divider()
     bracket_teams = sorted(in_bracket["team"].tolist()) if len(in_bracket) > 0 else sorted(scores["team"].tolist())
-    selected_team = st.selectbox("🔍 Team Deep Dive", bracket_teams)
+    selected_team = st.selectbox("🔍 Team Deep Dive", bracket_teams, key="team_selectbox")
     st.divider()
     if len(in_bracket) > 0:
         st.markdown("**📊 Model Summary**")
@@ -439,10 +445,18 @@ with col_h5:
     st.metric("⚠️ Avg #1 Seed Risk", f"{avg_risk:.1f}" if avg_risk else "—", "lower = safer")
 st.markdown("---")
 
+# ── Navigation banner after bracket deep-dive button clicked ──────────────────
+if st.session_state.dive_team:
+    st.info(f"📌 **{st.session_state.dive_team}** selected — click the **🔍 Team Deep Dive** tab above to view their full analysis.", icon="👆")
+    if st.button("✖ Clear selection", key="clear_dive"):
+        st.session_state.dive_team = None
+        st.rerun()
+
 # ── Main tabs ─────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "🏅 Rankings", "🎯 Sweet 16 Picks", "🔍 Team Deep Dive",
-    "📊 Model vs Committee", "🎲 Championship Odds", "🏆 Bracket", "📺 Live"
+    "📊 Model vs Committee", "🎲 Championship Odds", "🏆 Bracket", "📺 Live",
+    "🤖 Ask Statlasberg"
 ])
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1139,31 +1153,43 @@ with tab6:
                         # Matchup header
                         mh1, mh2 = st.columns(2)
                         with mh1:
-                            st.markdown(f"""
-                            <div style="padding:8px;background:#131820;border-radius:6px">
-                                <span style="background:{'#f97316' if fav_s==s1 else '#475569'};color:white;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:0.68rem;font-weight:800;margin-right:6px">{s1}</span>
-                                <strong style="color:#f1f5f9;font-size:0.95rem">{t1['team']}</strong>
-                                {(" <span style='color:#4ade80;font-size:0.72rem'>" + hl1 + "</span>") if hl1 else ""}
-                                <br/><small style="color:#94a3b8">Score: {c1:.1f}</small>
-                                <div style="background:#1e293b;border-radius:3px;height:4px;margin:4px 0">
-                                    <div style="width:{int(p1*100)}%;background:{'#4ade80' if p1>p2 else '#64748b'};height:4px;border-radius:3px"></div>
-                                </div>
-                                <span style="color:{'#4ade80' if p1>p2 else '#94a3b8'};font-weight:700;font-size:0.9rem">{p1*100:.0f}% · {american_line(p1)}</span>
-                            </div>
-                            """, unsafe_allow_html=True)
+                            hl1_span = f" <span style='color:#4ade80;font-size:0.72rem'>{hl1}</span>" if hl1 else ""
+                            seed1_bg = "#f97316" if fav_s == s1 else "#475569"
+                            bar1_bg  = "#4ade80" if p1 > p2 else "#64748b"
+                            txt1_col = "#4ade80" if p1 > p2 else "#94a3b8"
+                            st.markdown(
+                                f'<div style="padding:8px;background:#131820;border-radius:6px">'
+                                f'<span style="background:{seed1_bg};color:white;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:0.68rem;font-weight:800;margin-right:6px">{s1}</span>'
+                                f'<strong style="color:#f1f5f9;font-size:0.95rem">{t1["team"]}</strong>{hl1_span}'
+                                f'<br/><small style="color:#94a3b8">Score: {c1:.1f}</small>'
+                                f'<div style="background:#1e293b;border-radius:3px;height:4px;margin:4px 0">'
+                                f'<div style="width:{int(p1*100)}%;background:{bar1_bg};height:4px;border-radius:3px"></div></div>'
+                                f'<span style="color:{txt1_col};font-weight:700;font-size:0.9rem">{p1*100:.0f}% · {american_line(p1)}</span>'
+                                f'</div>',
+                                unsafe_allow_html=True)
+                            if st.button(f"🔍 {t1['team']} Deep Dive", key=f"dd1_{matchup_key}", use_container_width=True):
+                                st.session_state["team_selectbox"] = t1["team"]
+                                st.session_state.dive_team = t1["team"]
+                                st.rerun()
                         with mh2:
-                            st.markdown(f"""
-                            <div style="padding:8px;background:#131820;border-radius:6px">
-                                <span style="background:{'#f97316' if fav_s==s2 else '#475569'};color:white;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:0.68rem;font-weight:800;margin-right:6px">{s2}</span>
-                                <strong style="color:#f1f5f9;font-size:0.95rem">{t2['team']}</strong>
-                                {(" <span style='color:#4ade80;font-size:0.72rem'>" + hl2 + "</span>") if hl2 else ""}
-                                <br/><small style="color:#94a3b8">Score: {c2:.1f}</small>
-                                <div style="background:#1e293b;border-radius:3px;height:4px;margin:4px 0">
-                                    <div style="width:{int(p2*100)}%;background:{'#4ade80' if p2>p1 else '#64748b'};height:4px;border-radius:3px"></div>
-                                </div>
-                                <span style="color:{'#4ade80' if p2>p1 else '#94a3b8'};font-weight:700;font-size:0.9rem">{p2*100:.0f}% · {american_line(p2)}</span>
-                            </div>
-                            """, unsafe_allow_html=True)
+                            hl2_span = f" <span style='color:#4ade80;font-size:0.72rem'>{hl2}</span>" if hl2 else ""
+                            seed2_bg = "#f97316" if fav_s == s2 else "#475569"
+                            bar2_bg  = "#4ade80" if p2 > p1 else "#64748b"
+                            txt2_col = "#4ade80" if p2 > p1 else "#94a3b8"
+                            st.markdown(
+                                f'<div style="padding:8px;background:#131820;border-radius:6px">'
+                                f'<span style="background:{seed2_bg};color:white;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:0.68rem;font-weight:800;margin-right:6px">{s2}</span>'
+                                f'<strong style="color:#f1f5f9;font-size:0.95rem">{t2["team"]}</strong>{hl2_span}'
+                                f'<br/><small style="color:#94a3b8">Score: {c2:.1f}</small>'
+                                f'<div style="background:#1e293b;border-radius:3px;height:4px;margin:4px 0">'
+                                f'<div style="width:{int(p2*100)}%;background:{bar2_bg};height:4px;border-radius:3px"></div></div>'
+                                f'<span style="color:{txt2_col};font-weight:700;font-size:0.9rem">{p2*100:.0f}% · {american_line(p2)}</span>'
+                                f'</div>',
+                                unsafe_allow_html=True)
+                            if st.button(f"🔍 {t2['team']} Deep Dive", key=f"dd2_{matchup_key}", use_container_width=True):
+                                st.session_state["team_selectbox"] = t2["team"]
+                                st.session_state.dive_team = t2["team"]
+                                st.rerun()
 
                         # Public vs model line comparison
                         st.markdown(f"""
@@ -1516,3 +1542,321 @@ with tab7:
 
         st.markdown("---")
         st.caption("Data: ESPN public API · Refresh rate: manual or 60s auto · In-game probability blends model pre-game score (dominates early) with live score differential (dominates late). Model principles stay constant — late-game score doesn't override the model, it updates it.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STATLASBERG Q&A ENGINE
+# ─────────────────────────────────────────────────────────────────────────────
+def statlasberg_qa(q, bkt_df, s16, e8, ff, champion, champs_df):
+    """Rule-based Q&A engine for Statlasberg.  Returns a markdown string."""
+    import re as _re
+    q_low = q.lower().strip()
+
+    # ── Champion ──────────────────────────────────────────────────────────────
+    if any(w in q_low for w in ["champion", "win it all", "cut the nets", "national title",
+                                 "going all the way", "best pick", "winner"]):
+        champ_pct_str = ""
+        if len(champs_df) > 0 and champion in champs_df["team"].values:
+            pct = float(champs_df[champs_df["team"] == champion]["championship_pct"].iloc[0])
+            champ_pct_str = f" ({pct:.1f}% in 500k simulations)"
+        row = bkt_df[bkt_df["team"] == champion]
+        score_str = f" — contender score **{safe_f(row.iloc[0].get('contender_score',50)):.1f}/100**" if len(row) else ""
+        return (f"🏆 My champion pick is **{champion}**{champ_pct_str}{score_str}.\n\n"
+                f"Runner-up: **{sim_runner_up}**.")
+
+    # ── Final Four ────────────────────────────────────────────────────────────
+    if "final four" in q_low or "final 4" in q_low or "semifinal" in q_low:
+        ff_str = " · ".join(f"**{t}**" for t in ff) if ff else "—"
+        return (f"🏀 My Final Four picks: {ff_str}\n\n"
+                f"*(Determined by deterministic bracket simulation on contender scores)*")
+
+    # ── Region winner ─────────────────────────────────────────────────────────
+    for region in ["east", "west", "south", "midwest"]:
+        if region in q_low and any(w in q_low for w in ["win", "who", "pick", "region", "represent"]):
+            region_teams = bkt_df[bkt_df["region"].str.lower() == region]["team"].tolist()
+            ff_from = [t for t in ff if t in region_teams]
+            if ff_from:
+                seed_row = bkt_df[bkt_df["team"] == ff_from[0]]
+                seed_str = f" (#{int(seed_row.iloc[0]['seed'])} seed)" if len(seed_row) and "seed" in seed_row.columns else ""
+                return (f"🏆 **{ff_from[0]}**{seed_str} is my pick to represent the "
+                        f"**{region.capitalize()}** in the Final Four.")
+            return f"🤔 No Final Four team found for the **{region.capitalize()}** in current simulation."
+
+    # ── Sweet 16 ──────────────────────────────────────────────────────────────
+    if "sweet 16" in q_low or "sweet sixteen" in q_low or "second week" in q_low:
+        if s16:
+            by_region = {}
+            for t in s16:
+                r = bkt_df[bkt_df["team"] == t]["region"].values
+                reg = r[0] if len(r) else "Unknown"
+                by_region.setdefault(reg, []).append(t)
+            lines = [f"**{reg}**: {', '.join(teams)}" for reg, teams in sorted(by_region.items())]
+            return "🎯 My Sweet 16 picks:\n\n" + "\n\n".join(lines)
+        return "Sweet 16 data not available — run pipeline first."
+
+    # ── Elite Eight ───────────────────────────────────────────────────────────
+    if "elite eight" in q_low or "elite 8" in q_low or "quarterfinal" in q_low:
+        if e8:
+            e8_str = " · ".join(f"**{t}**" for t in e8)
+            return f"🎯 My Elite Eight picks: {e8_str}"
+        return "Elite Eight data not available."
+
+    # ── Upset / Cinderella ────────────────────────────────────────────────────
+    if any(w in q_low for w in ["upset", "cinderella", "darkhorse", "dark horse", "sleeper", "surprise"]):
+        upsets = [(row["team"], int(row["seed"])) for _, row in bkt_df.iterrows()
+                  if row.get("seed", 1) >= 10 and row["team"] in (s16 or [])]
+        if upsets:
+            upsets_sorted = sorted(upsets, key=lambda x: x[1], reverse=True)
+            lines = [f"• **#{s} {t}** — model sends them to the Sweet 16" for t, s in upsets_sorted]
+            return "💥 Upset picks to make the Sweet 16:\n\n" + "\n".join(lines)
+        # Fallback: high-seeded teams with high contender scores
+        threats = bkt_df[bkt_df["seed"] >= 10].sort_values("contender_score", ascending=False).head(5)
+        if len(threats):
+            lines = [f"• **#{int(r['seed'])} {r['team']}** (score: {safe_f(r.get('contender_score',50)):.1f})"
+                     for _, r in threats.iterrows()]
+            return "💥 Best upset threats this year:\n\n" + "\n".join(lines)
+        return "No major upsets predicted — chalk looks strong."
+
+    # ── Fraud / Overrated ─────────────────────────────────────────────────────
+    if any(w in q_low for w in ["fraud", "overrated", "avoid", "fade", "trap team", "don't trust"]):
+        fraud_col = "fraud_favorite_flag"
+        if fraud_col in bkt_df.columns:
+            frauds = bkt_df[bkt_df[fraud_col] == True].sort_values("seed")
+            if len(frauds):
+                lines = [f"• **#{int(r['seed'])} {r['team']}** (score: {safe_f(r.get('contender_score',50)):.1f}, "
+                         f"risk: {safe_f(r.get('upset_risk_score',50)):.0f})"
+                         for _, r in frauds.iterrows()]
+                return "⚠️ **Fraud Favorites** — high seed, model doesn't believe in them:\n\n" + "\n".join(lines)
+        return "No clear fraud favorites flagged this year — seeds look legitimate."
+
+    # ── Top / Best Team ───────────────────────────────────────────────────────
+    if any(w in q_low for w in ["best team", "top team", "number one", "#1", "strongest", "highest score"]):
+        top = bkt_df.sort_values("contender_score", ascending=False).iloc[0]
+        return (f"📈 **{top['team']}** has the highest contender score: "
+                f"**{safe_f(top.get('contender_score',50)):.1f}/100** "
+                f"(#{int(top.get('seed', 0))} seed, {top.get('archetype', '—')})")
+
+    # ── Compare two teams ─────────────────────────────────────────────────────
+    vs_match = _re.search(r'(.+?)\s+(?:vs\.?|versus|against|or|beat)\s+(.+)', q_low)
+    if vs_match:
+        t1_q = vs_match.group(1).strip()
+        t2_q = vs_match.group(2).strip().rstrip("?")
+
+        def find_team_row(query):
+            for _, row in bkt_df.iterrows():
+                if query == row["team"].lower() or query in row["team"].lower() or row["team"].lower() in query:
+                    return row
+            return None
+
+        r1 = find_team_row(t1_q)
+        r2 = find_team_row(t2_q)
+        if r1 is not None and r2 is not None:
+            sc1 = safe_f(r1.get("contender_score", 50))
+            sc2 = safe_f(r2.get("contender_score", 50))
+            p1  = win_prob_sigmoid(sc1, sc2)
+            fav = r1["team"] if p1 >= 0.5 else r2["team"]
+            fav_p = max(p1, 1 - p1)
+            dog_p = min(p1, 1 - p1)
+            return (f"⚔️ **{r1['team']}** ({sc1:.1f}) vs **{r2['team']}** ({sc2:.1f})\n\n"
+                    f"Model favors **{fav}** at **{fav_p*100:.0f}%** "
+                    f"({american_line(fav_p)} · opponent {american_line(dog_p)})\n\n"
+                    f"*Based on contender scores — doesn't account for bracket seeding position.*")
+
+    # ── Team lookup ───────────────────────────────────────────────────────────
+    matched = None
+    words = [w for w in q_low.split() if len(w) >= 4]
+    for _, row in bkt_df.iterrows():
+        t_low = row["team"].lower()
+        if t_low in q_low or any(w in t_low for w in words):
+            matched = row
+            break
+    if matched is not None:
+        score  = safe_f(matched.get("contender_score", 50))
+        risk   = safe_f(matched.get("upset_risk_score", 25))
+        arch   = matched.get("archetype", "Unknown")
+        seed   = int(matched["seed"]) if matched.get("seed") and str(matched.get("seed")) != "nan" else "—"
+        sim_r  = matched.get("sim_round", "First Round")
+        def_s  = safe_f(matched.get("defense_score", 50))
+        cl_s   = safe_f(matched.get("clutch_score", 50))
+        champ_pct_row = ""
+        if len(champs_df) and matched["team"] in champs_df["team"].values:
+            pct = float(champs_df[champs_df["team"] == matched["team"]]["championship_pct"].iloc[0])
+            champ_pct_row = f"\n• Championship probability: **{pct:.1f}%**"
+        return (f"📋 **{matched['team']}** — #{seed} seed · {arch}\n\n"
+                f"• Contender Score: **{score:.1f}/100**\n"
+                f"• Upset Risk: **{risk:.1f}/100**\n"
+                f"• Defense Score: **{def_s:.1f}** · Clutch Score: **{cl_s:.1f}**\n"
+                f"• Predicted round: **{sim_r}**{champ_pct_row}")
+
+    # ── Default ───────────────────────────────────────────────────────────────
+    return ("🤔 I didn't catch that. Try one of these:\n\n"
+            "- *Who is your champion pick?*\n"
+            "- *Who wins the East?*\n"
+            "- *What's your Final Four?*\n"
+            "- *Best upset picks?*\n"
+            "- *Who are the fraud favorites?*\n"
+            "- *Duke vs Kentucky* (head-to-head)\n"
+            "- *Tell me about Auburn*")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 8 — ASK STATLASBERG  (Q&A + Model Comparison)
+# ─────────────────────────────────────────────────────────────────────────────
+with tab8:
+    st.markdown('<div class="section-header">🤖 Ask Statlasberg</div>', unsafe_allow_html=True)
+    st.caption("Ask about picks, matchups, upsets, or any team — rule-based engine powered by our contender model.")
+
+    # ── Model Comparison ──────────────────────────────────────────────────────
+    with st.expander("📊 Model Comparison — Statlasberg vs KenPom-Proxy vs Seed Baseline", expanded=True):
+        if len(in_bracket) > 0:
+            comp_df = in_bracket.copy()
+
+            # Statlasberg rank: by contender_score descending
+            comp_df["statl_rank"] = comp_df["contender_score"].rank(ascending=False, method="min").astype(int)
+
+            # KenPom-proxy: rank by adj_margin if available, else adj_offense - adj_defense
+            if "adj_margin" in comp_df.columns and comp_df["adj_margin"].notna().any():
+                comp_df["kp_rank"] = comp_df["adj_margin"].rank(ascending=False, method="min").fillna(99).astype(int)
+                kp_label = "KenPom-Proxy\n(adj_margin rank)"
+            elif "adj_offense" in comp_df.columns and "adj_defense" in comp_df.columns:
+                comp_df["adj_net"] = comp_df["adj_offense"].fillna(0) - comp_df["adj_defense"].fillna(0)
+                comp_df["kp_rank"] = comp_df["adj_net"].rank(ascending=False, method="min").fillna(99).astype(int)
+                kp_label = "KenPom-Proxy\n(adj net rank)"
+            else:
+                comp_df["kp_rank"] = comp_df["seed"].astype(int)
+                kp_label = "KenPom-Proxy\n(seed — no adj data)"
+
+            # Seed baseline rank: within-region seed (1 best per region)
+            comp_df["seed_rank"] = comp_df.groupby("region")["seed"].rank(method="min").astype(int)
+
+            # Compute Final Four for each model
+            # Statlasberg FF already in sim_ff
+            # KenPom-proxy FF: top team by kp_rank in each region
+            kp_ff = []
+            for reg in comp_df["region"].unique():
+                reg_df = comp_df[comp_df["region"] == reg].sort_values("kp_rank")
+                if len(reg_df):
+                    kp_ff.append(reg_df.iloc[0]["team"])
+            # Seed baseline FF: #1 seed in each region
+            seed_ff = []
+            for reg in comp_df["region"].unique():
+                reg_df = comp_df[(comp_df["region"] == reg) & (comp_df["seed"] == 1)]
+                if len(reg_df):
+                    seed_ff.append(reg_df.iloc[0]["team"])
+
+            # ── Final Four Comparison ─────────────────────────────────────────
+            st.markdown("#### 🏀 Final Four Predictions")
+            ff_col1, ff_col2, ff_col3 = st.columns(3)
+            with ff_col1:
+                st.markdown("**🤖 Statlasberg**")
+                for t in (sim_ff or []):
+                    row = comp_df[comp_df["team"] == t]
+                    seed_str = f" (#{int(row.iloc[0]['seed'])})" if len(row) else ""
+                    st.markdown(f"• {t}{seed_str}")
+                st.markdown(f"**Champion:** {sim_champion}")
+            with ff_col2:
+                st.markdown(f"**📊 {kp_label.split(chr(10))[0]}**")
+                for t in kp_ff:
+                    row = comp_df[comp_df["team"] == t]
+                    seed_str = f" (#{int(row.iloc[0]['seed'])})" if len(row) else ""
+                    st.markdown(f"• {t}{seed_str}")
+                st.markdown(f"**Champion:** {kp_ff[0] if kp_ff else '—'}")
+            with ff_col3:
+                st.markdown("**🎲 Seed Baseline (#1 seeds)**")
+                for t in seed_ff:
+                    st.markdown(f"• {t} (#1)")
+                st.markdown(f"**Champion:** {seed_ff[0] if seed_ff else '—'}")
+
+            st.markdown("---")
+
+            # ── Rankings comparison table ─────────────────────────────────────
+            st.markdown("#### 📋 Top 20 Teams — Cross-Model Rankings")
+            top20 = comp_df.sort_values("statl_rank").head(20)[
+                ["team", "region", "seed", "statl_rank", "kp_rank", "contender_score", "sim_round"]
+            ].copy()
+            top20.columns = ["Team", "Region", "Seed", "Statlasberg Rank", kp_label.replace("\n", " "), "Score", "Predicted Round"]
+
+            # Color-code rank differences
+            def highlight_gap(row):
+                try:
+                    gap = int(row["Statlasberg Rank"]) - int(row[kp_label.replace(chr(10), " ")])
+                    if gap <= -5:   return [""] * len(row) + []
+                except Exception:
+                    pass
+                return [""] * len(row)
+
+            st.dataframe(
+                top20.set_index("Team"),
+                use_container_width=True,
+                column_config={
+                    "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f"),
+                    "Statlasberg Rank": st.column_config.NumberColumn("Statl. Rank", format="%d"),
+                    kp_label.replace("\n", " "): st.column_config.NumberColumn("KP-Proxy Rank", format="%d"),
+                }
+            )
+
+            # ── Big disagreements ─────────────────────────────────────────────
+            comp_df["rank_gap"] = (comp_df["statl_rank"] - comp_df["kp_rank"]).abs()
+            disagree = comp_df[comp_df["rank_gap"] >= 8].sort_values("rank_gap", ascending=False).head(8)
+            if len(disagree):
+                st.markdown("#### ⚡ Biggest Disagreements Between Models")
+                for _, row in disagree.iterrows():
+                    gap_dir = "📈 Statlasberg **higher** on" if row["statl_rank"] < row["kp_rank"] else "📉 Statlasberg **lower** on"
+                    st.markdown(
+                        f'<div style="background:#1e293b;border-radius:6px;padding:8px 12px;margin:4px 0;font-size:0.85rem">'
+                        f'{gap_dir} <strong style="color:#f1f5f9">{row["team"]}</strong> '
+                        f'<span style="color:#94a3b8">(#{int(row["seed"])} seed)</span> — '
+                        f'Statl. rank <strong style="color:#4ade80">#{int(row["statl_rank"])}</strong> · '
+                        f'KP-Proxy rank <strong style="color:#f87171">#{int(row["kp_rank"])}</strong>'
+                        f'</div>',
+                        unsafe_allow_html=True)
+        else:
+            st.info("Load bracket data to see model comparisons.")
+
+    st.markdown("---")
+
+    # ── Chat Q&A ──────────────────────────────────────────────────────────────
+    st.markdown("### 💬 Ask Me Anything About the 2026 Tournament")
+
+    # Suggestion chips
+    suggestions = [
+        "Who is your champion pick?",
+        "What's your Final Four?",
+        "Who wins the East?",
+        "Best upset picks?",
+        "Who are the fraud favorites?",
+        "Tell me about Auburn",
+    ]
+    chip_cols = st.columns(len(suggestions))
+    for i, sug in enumerate(suggestions):
+        with chip_cols[i]:
+            if st.button(sug, key=f"chip_{i}", use_container_width=True):
+                st.session_state.chat_history.append({"role": "user", "content": sug})
+                resp = statlasberg_qa(sug, in_bracket, sim_s16, sim_e8, sim_ff,
+                                      sim_champion, champs)
+                st.session_state.chat_history.append({"role": "assistant", "content": resp})
+                st.rerun()
+
+    # Chat history display
+    chat_container = st.container()
+    with chat_container:
+        for msg in st.session_state.chat_history:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+    # Chat input
+    if user_q := st.chat_input("Ask about teams, matchups, upsets, the champion pick…"):
+        st.session_state.chat_history.append({"role": "user", "content": user_q})
+        with st.spinner("Thinking…"):
+            response = statlasberg_qa(user_q, in_bracket, sim_s16, sim_e8, sim_ff,
+                                      sim_champion, champs)
+        st.session_state.chat_history.append({"role": "assistant", "content": response})
+        st.rerun()
+
+    if st.session_state.chat_history:
+        if st.button("🗑 Clear chat", key="clear_chat"):
+            st.session_state.chat_history = []
+            st.rerun()
+
+    st.markdown("---")
+    st.caption("Statlasberg Q&A is rule-based — it answers from the contender score model, not an LLM. Responses reflect this bracket's simulation only.")

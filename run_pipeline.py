@@ -79,7 +79,7 @@ def run_scoring_pipeline(df):
     return df
 
 
-def run_bracket_simulation(scores_df, bracket_path, n_sims=10000):
+def run_bracket_simulation(scores_df, bracket_path, n_sims=500000):
     """Step 8: Load bracket and run Monte Carlo simulation."""
     from src.models.simulate_bracket import simulate_bracket
 
@@ -109,8 +109,8 @@ def main():
                         help="Path to bracket CSV (columns: region, seed, team)")
     parser.add_argument("--simulate", action="store_true",
                         help="Run bracket simulation (requires --bracket)")
-    parser.add_argument("--sims", type=int, default=10000,
-                        help="Number of simulations (default: 10000)")
+    parser.add_argument("--sims", type=int, default=500000,
+                        help="Number of simulations (default: 500000)")
     parser.add_argument("--top", type=int, default=20,
                         help="Print top N teams (default: 20)")
     args = parser.parse_args()
