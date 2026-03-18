@@ -231,6 +231,14 @@ def style_matchup_insight(t1, t2):
         return f"🏀 Clear backcourt edge for {edge} — guard play decides this one"
     return "⚖️ Evenly matched — execution and one momentum run decides this"
 
+def style_matchup_insight_by_name(name1, name2, bkt_df):
+    """Look up teams by name and return style matchup insight, or None."""
+    r1 = bkt_df[bkt_df["team"] == name1]
+    r2 = bkt_df[bkt_df["team"] == name2]
+    if len(r1) == 0 or len(r2) == 0:
+        return None
+    return style_matchup_insight(r1.iloc[0], r2.iloc[0])
+
 def safe_f(v, d=0.0):
     try: return float(v) if pd.notna(v) and v != '' else d
     except: return d
@@ -238,6 +246,79 @@ def safe_f(v, d=0.0):
 def safe_i(v, d=0):
     try: return int(float(v)) if pd.notna(v) and v != '' else d
     except: return d
+
+def build_round_matchups(bkt_df):
+    """Return matchups for every round as a dict: round → list of (t1, t2, winner, loser, region)."""
+    rounds = {"R64": [], "R32": [], "S16": [], "E8": [], "FF": [], "Championship": []}
+    score_lkp = {r["team"]: safe_f(r.get("contender_score", 50)) for _, r in bkt_df.iterrows()}
+
+    def pwin(t1, t2):
+        if not t1: return t2, t1
+        if not t2: return t1, t2
+        p = win_prob_sigmoid(score_lkp.get(t1, 50), score_lkp.get(t2, 50))
+        return (t1, t2) if p >= 0.5 else (t2, t1)
+
+    PODS = [
+        ([(1,16),(8,9)],  [(5,12),(4,13)]),
+        ([(6,11),(3,14)], [(7,10),(2,15)]),
+    ]
+    ff_teams = []
+    for region in ["East", "South", "West", "Midwest"]:
+        reg = bkt_df[bkt_df["region"] == region]
+        s2t = {int(r["seed"]): r["team"] for _, r in reg.iterrows() if pd.notna(r.get("seed"))}
+        region_e8 = []
+        for pod_a_pairs, pod_b_pairs in PODS:
+            r1w_a, r1w_b = [], []
+            for s1, s2 in pod_a_pairs:
+                t1n, t2n = s2t.get(s1, ""), s2t.get(s2, "")
+                if t1n or t2n:
+                    w, l = pwin(t1n, t2n)
+                    rounds["R64"].append((t1n, t2n, w, l, region))
+                    if w: r1w_a.append(w)
+            for s1, s2 in pod_b_pairs:
+                t1n, t2n = s2t.get(s1, ""), s2t.get(s2, "")
+                if t1n or t2n:
+                    w, l = pwin(t1n, t2n)
+                    rounds["R64"].append((t1n, t2n, w, l, region))
+                    if w: r1w_b.append(w)
+            # R32
+            pod_a_s16 = ""
+            if len(r1w_a) == 2:
+                w, l = pwin(r1w_a[0], r1w_a[1])
+                rounds["R32"].append((r1w_a[0], r1w_a[1], w, l, region))
+                pod_a_s16 = w
+            elif r1w_a:
+                pod_a_s16 = r1w_a[0]
+            pod_b_s16 = ""
+            if len(r1w_b) == 2:
+                w, l = pwin(r1w_b[0], r1w_b[1])
+                rounds["R32"].append((r1w_b[0], r1w_b[1], w, l, region))
+                pod_b_s16 = w
+            elif r1w_b:
+                pod_b_s16 = r1w_b[0]
+            # S16
+            if pod_a_s16 and pod_b_s16:
+                w, l = pwin(pod_a_s16, pod_b_s16)
+                rounds["S16"].append((pod_a_s16, pod_b_s16, w, l, region))
+                region_e8.append(w)
+        # E8
+        if len(region_e8) == 2:
+            w, l = pwin(region_e8[0], region_e8[1])
+            rounds["E8"].append((region_e8[0], region_e8[1], w, l, region))
+            ff_teams.append(w)
+    # Final Four
+    champ_teams = []
+    ff_pairs = [(ff_teams[0], ff_teams[3]), (ff_teams[1], ff_teams[2])] if len(ff_teams) >= 4 else []
+    for t1n, t2n in ff_pairs:
+        w, l = pwin(t1n, t2n)
+        rounds["FF"].append((t1n, t2n, w, l, "National"))
+        champ_teams.append(w)
+    # Championship
+    if len(champ_teams) == 2:
+        w, l = pwin(champ_teams[0], champ_teams[1])
+        rounds["Championship"].append((champ_teams[0], champ_teams[1], w, l, "National"))
+    return rounds
+
 
 def simulate_bracket_full(bkt_df):
     """Deterministic bracket simulation using win_prob_sigmoid on contender scores.
@@ -502,7 +583,7 @@ if st.session_state.dive_team:
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "🏅 Rankings", "🎯 Sweet 16 Picks", "🔍 Team Deep Dive",
     "📊 Model vs Committee", "🎲 Championship Odds", "🏆 Bracket", "📺 Live",
-    "🤖 Ask Statlasberg", "📈 Model Accuracy"
+    "📊 Model Comparison", "📈 Model Accuracy"
 ])
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1304,207 +1385,354 @@ with tab6:
     if "region" not in in_bracket.columns or len(in_bracket) == 0:
         st.warning("Bracket data not loaded.")
     else:
-        reg_cols_br = st.columns(4)
-        for reg_i, (region, rcol) in enumerate(zip(["East","South","West","Midwest"], reg_cols_br)):
-            region_data = in_bracket[in_bracket["region"]==region].copy()
-            top1_rows = region_data[region_data["seed"]==1]
-            top1_name = top1_rows.iloc[0]["team"] if len(top1_rows)>0 else "TBD"
+        all_round_matchups = build_round_matchups(in_bracket)
 
-            with rcol:
-                st.markdown(f'<div style="color:#ff8c3a;font-weight:800;font-size:1rem;border-bottom:2px solid #f97316;padding-bottom:3px;margin-bottom:8px;text-transform:uppercase">{region} · #1 {top1_name}</div>', unsafe_allow_html=True)
+        br_r64, br_r32, br_s16, br_e8, br_ff, br_champ = st.tabs([
+            "🎯 Round of 64", "⚡ Round of 32", "🔥 Sweet 16", "💎 Elite 8", "🏅 Final Four", "🏆 Championship"
+        ])
 
-                for s1, s2 in BRACKET_PAIRS:
-                    t1_rows = region_data[region_data["seed"]==s1]
-                    t2_rows = region_data[region_data["seed"]==s2]
-                    if len(t1_rows)==0 or len(t2_rows)==0: continue
-
-                    t1 = t1_rows.iloc[0]
-                    t2 = t2_rows.iloc[0]
-                    c1 = safe_f(t1.get("contender_score",50))
-                    c2 = safe_f(t2.get("contender_score",50))
-                    p1 = win_prob_sigmoid(c1, c2)
-                    p2 = 1 - p1
-
-                    # Public/historical line
-                    hist_p1 = HIST_SEED_WIN_PCT.get((s1, s2), 0.5)
-
-                    fav_s  = s1 if p1 >= p2 else s2
-                    dog_s  = s2 if p1 >= p2 else s1
-                    fav    = t1 if p1 >= p2 else t2
-                    dog    = t2 if p1 >= p2 else t1
-                    fav_p  = max(p1, p2)
-                    dog_p  = min(p1, p2)
-                    fav_c  = c1 if p1 >= p2 else c2
-                    dog_c  = c2 if p1 >= p2 else c1
-
-                    matchup_key = f"{region}_{s1}v{s2}"
-                    result_rec  = results_dict.get(matchup_key, {})
-                    result_winner = result_rec.get("winner")
-
-                    hl1 = hot_label(t1)
-                    hl2 = hot_label(t2)
-
-                    # Model vs seed-baseline edge (NOT live sportsbook lines)
-                    edge = abs(p1 - hist_p1)
-                    edge_tag = ""
-                    if p1 > hist_p1 + 0.12:
-                        edge_tag = f"<span style='color:#4ade80;font-size:0.7rem;font-weight:700'> 📐 Model diverges — higher on #{s1}</span>"
-                    elif p1 < hist_p1 - 0.12:
-                        edge_tag = f"<span style='color:#f59e0b;font-size:0.7rem;font-weight:700'> 📐 Model diverges — higher on #{s2}</span>"
-
-                    result_badge = ""
-                    if result_winner:
-                        correct = result_winner == fav["team"]
-                        result_badge = " ✅" if correct else " ❌"
-
-                    with st.expander(f"#{s1} vs #{s2}{result_badge}", expanded=False):
-                        # Matchup header
-                        mh1, mh2 = st.columns(2)
-                        with mh1:
-                            hl1_span = f" <span style='color:#4ade80;font-size:0.72rem'>{hl1}</span>" if hl1 else ""
-                            seed1_bg = "#f97316" if fav_s == s1 else "#475569"
-                            bar1_bg  = "#4ade80" if p1 > p2 else "#64748b"
-                            txt1_col = "#4ade80" if p1 > p2 else "#94a3b8"
-                            st.markdown(
-                                f'<div style="padding:8px;background:#131820;border-radius:6px">'
-                                f'<span style="background:{seed1_bg};color:white;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:0.68rem;font-weight:800;margin-right:6px">{s1}</span>'
-                                f'<strong style="color:#f1f5f9;font-size:0.95rem">{t1["team"]}</strong>{hl1_span}'
-                                f'<br/><small style="color:#94a3b8">Score: {c1:.1f}</small>'
-                                f'<div style="background:#1e293b;border-radius:3px;height:4px;margin:4px 0">'
-                                f'<div style="width:{int(p1*100)}%;background:{bar1_bg};height:4px;border-radius:3px"></div></div>'
-                                f'<span style="color:{txt1_col};font-weight:700;font-size:0.9rem">{p1*100:.0f}% · {american_line(p1)}</span>'
-                                f'</div>',
-                                unsafe_allow_html=True)
-                            if st.button(f"🔍 {t1['team']} Deep Dive", key=f"dd1_{matchup_key}", use_container_width=True):
-                                st.session_state["team_selectbox"] = t1["team"]
-                                st.session_state.dive_team = t1["team"]
-                                st.rerun()
-                        with mh2:
-                            hl2_span = f" <span style='color:#4ade80;font-size:0.72rem'>{hl2}</span>" if hl2 else ""
-                            seed2_bg = "#f97316" if fav_s == s2 else "#475569"
-                            bar2_bg  = "#4ade80" if p2 > p1 else "#64748b"
-                            txt2_col = "#4ade80" if p2 > p1 else "#94a3b8"
-                            st.markdown(
-                                f'<div style="padding:8px;background:#131820;border-radius:6px">'
-                                f'<span style="background:{seed2_bg};color:white;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:0.68rem;font-weight:800;margin-right:6px">{s2}</span>'
-                                f'<strong style="color:#f1f5f9;font-size:0.95rem">{t2["team"]}</strong>{hl2_span}'
-                                f'<br/><small style="color:#94a3b8">Score: {c2:.1f}</small>'
-                                f'<div style="background:#1e293b;border-radius:3px;height:4px;margin:4px 0">'
-                                f'<div style="width:{int(p2*100)}%;background:{bar2_bg};height:4px;border-radius:3px"></div></div>'
-                                f'<span style="color:{txt2_col};font-weight:700;font-size:0.9rem">{p2*100:.0f}% · {american_line(p2)}</span>'
-                                f'</div>',
-                                unsafe_allow_html=True)
-                            if st.button(f"🔍 {t2['team']} Deep Dive", key=f"dd2_{matchup_key}", use_container_width=True):
-                                st.session_state["team_selectbox"] = t2["team"]
-                                st.session_state.dive_team = t2["team"]
-                                st.rerun()
-
-                        # Model line vs seed baseline (not live sportsbook lines)
+        def _render_matchup_exp(t1_name, t2_name, winner, loser, region, rnd_key):
+            """Render a matchup expander for R32+ rounds."""
+            if not t1_name or not t2_name:
+                return
+            t1_row = in_bracket[in_bracket["team"] == t1_name]
+            t2_row = in_bracket[in_bracket["team"] == t2_name]
+            t1 = t1_row.iloc[0] if len(t1_row) else None
+            t2 = t2_row.iloc[0] if len(t2_row) else None
+            if t1 is None or t2 is None:
+                return
+            c1 = safe_f(t1.get("contender_score", 50))
+            c2 = safe_f(t2.get("contender_score", 50))
+            p1 = win_prob_sigmoid(c1, c2)
+            p2 = 1 - p1
+            s1 = int(t1.get("seed")) if pd.notna(t1.get("seed")) else 0
+            s2 = int(t2.get("seed")) if pd.notna(t2.get("seed")) else 0
+            with st.expander(
+                f"#{s1} {t1_name}  vs  #{s2} {t2_name}  —  Projected: **{winner}**",
+                expanded=False
+            ):
+                mh1, mh2 = st.columns(2)
+                for col, team, c, p, seed_n in [(mh1, t1, c1, p1, s1), (mh2, t2, c2, p2, s2)]:
+                    with col:
+                        is_w = (team["team"] == winner)
+                        bdr = "#f97316" if is_w else "#374151"
+                        bar_bg = "#4ade80" if is_w else "#64748b"
+                        tname = team["team"]
                         st.markdown(
-                            f'<div style="background:#1e293b;border-radius:6px;padding:6px 10px;margin:5px 0;font-size:0.8rem">'
-                            f'<strong style="color:#b0bbd0">🎯 Statlasberg Line:</strong> '
-                            f'<span style="color:#f1f5f9">#{s1} <strong style="color:#4ade80">{american_line(p1)}</strong> &nbsp;/&nbsp; '
-                            f'#{s2} <strong style="color:#4ade80">{american_line(p2)}</strong></span>'
-                            f'&nbsp;&nbsp;<span style="color:#475569;font-size:0.72rem">Seed baseline: #{s1} {american_line(hist_p1)} / #{s2} {american_line(1-hist_p1)}</span>'
-                            f'{edge_tag}'
-                            f'</div>'
-                            f'<div style="font-size:0.68rem;color:#475569;padding:2px 10px">For live sportsbook lines check DraftKings · FanDuel · ESPN Bet</div>',
-                            unsafe_allow_html=True)
+                            f'<div style="padding:8px;background:#131820;border:2px solid {bdr};border-radius:8px">'
+                            f'<span style="background:{"#f97316" if is_w else "#475569"};color:white;border-radius:50%;'
+                            f'width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;'
+                            f'font-size:0.68rem;font-weight:800;margin-right:6px">{seed_n}</span>'
+                            f'<strong style="color:#f1f5f9;font-size:0.95rem">{tname}</strong>'
+                            f'{"  🏆 Projected Winner" if is_w else ""}'
+                            f'<br/><small style="color:#94a3b8">Score: {c:.1f}</small>'
+                            f'<div style="background:#1e293b;border-radius:3px;height:4px;margin:4px 0">'
+                            f'<div style="width:{int(p*100)}%;background:{bar_bg};height:4px;border-radius:3px"></div></div>'
+                            f'<span style="color:{"#4ade80" if is_w else "#94a3b8"};font-weight:700;font-size:0.9rem">'
+                            f'{p*100:.0f}% · {american_line(p)}</span>'
+                            f'</div>', unsafe_allow_html=True)
+                        if st.button(f"🔍 {tname} Deep Dive", key=f"dd_{rnd_key}_{tname}", use_container_width=True):
+                            st.session_state["team_selectbox"] = tname
+                            st.session_state.dive_team = tname
+                            st.rerun()
+                insight = style_matchup_insight(t1, t2)
+                st.markdown(f'<div style="background:#1a2a1a;border-left:3px solid #16a34a;border-radius:4px;padding:6px 10px;margin:5px 0;color:#d1fae5;font-size:0.82rem">💡 {insight}</div>', unsafe_allow_html=True)
+                fav_row = t1 if p1 >= p2 else t2
+                dog_row = t2 if p1 >= p2 else t1
+                fav_cl = safe_f(fav_row.get("clutch_score", 50))
+                dog_cl = safe_f(dog_row.get("clutch_score", 50))
+                if abs(fav_cl - dog_cl) > 8:
+                    cl_edge = fav_row["team"] if fav_cl > dog_cl else dog_row["team"]
+                    st.markdown(f'<small style="color:#fbbf24">⚡ Clutch edge: <strong>{cl_edge}</strong> (diff: {abs(fav_cl-dog_cl):.0f} pts)</small>', unsafe_allow_html=True)
+                flag_msgs = []
+                if fav_row.get("fraud_favorite_flag", False): flag_msgs.append(f"⚠️ {fav_row['team']} is a Fraud Favorite")
+                if dog_row.get("dangerous_low_seed_flag", False): flag_msgs.append(f"💥 {dog_row['team']} is a Dangerous Low Seed")
+                if dog_row.get("cinderella_flag", False): flag_msgs.append(f"🪄 {dog_row['team']} has Cinderella traits")
+                for msg in flag_msgs:
+                    st.markdown(f'<small style="color:#f87171">{msg}</small>', unsafe_allow_html=True)
+                st.markdown(f'<div style="text-align:center;color:#475569;font-size:0.72rem;margin-top:4px">📍 {region} Region</div>', unsafe_allow_html=True)
 
-                        # Style matchup insight
-                        insight = style_matchup_insight(t1, t2)
-                        st.markdown(f'<div style="background:#1a2a1a;border-left:3px solid #16a34a;border-radius:4px;padding:6px 10px;margin:5px 0;color:#d1fae5;font-size:0.82rem">💡 {insight}</div>', unsafe_allow_html=True)
+        with br_r64:
+            st.caption("First-round matchups by region. Model line vs. seed baseline. Log results to track model accuracy.")
+            reg_cols_br = st.columns(4)
+            for reg_i, (region, rcol) in enumerate(zip(["East","South","West","Midwest"], reg_cols_br)):
+                region_data = in_bracket[in_bracket["region"]==region].copy()
+                top1_rows = region_data[region_data["seed"]==1]
+                top1_name = top1_rows.iloc[0]["team"] if len(top1_rows)>0 else "TBD"
 
-                        # Clutch factor
-                        fav_cl = safe_f(fav.get("clutch_score",50))
-                        dog_cl = safe_f(dog.get("clutch_score",50))
-                        fav_cwp = safe_f(fav.get("close_win_pct",0.5))
-                        dog_cwp = safe_f(dog.get("close_win_pct",0.5))
-                        if abs(fav_cl - dog_cl) > 8:
-                            cl_edge = fav["team"] if fav_cl > dog_cl else dog["team"]
-                            st.markdown(f'<small style="color:#fbbf24">⚡ GW/Clutch edge: <strong>{cl_edge}</strong> (clutch score diff: {abs(fav_cl-dog_cl):.0f} pts) — ~3-5% factor in close games</small>', unsafe_allow_html=True)
+                with rcol:
+                    st.markdown(f'<div style="color:#ff8c3a;font-weight:800;font-size:1rem;border-bottom:2px solid #f97316;padding-bottom:3px;margin-bottom:8px;text-transform:uppercase">{region} · #1 {top1_name}</div>', unsafe_allow_html=True)
 
-                        # Model flags
-                        flag_msgs = []
-                        if fav.get("fraud_favorite_flag", False): flag_msgs.append(f"⚠️ {fav['team']} is a Fraud Favorite — upset risk elevated")
-                        if dog.get("dangerous_low_seed_flag", False): flag_msgs.append(f"💥 {dog['team']} is a Dangerous Low Seed")
-                        if dog.get("cinderella_flag", False): flag_msgs.append(f"🪄 {dog['team']} has Cinderella traits — don't sleep on them")
-                        if dog_p > 0.38: flag_msgs.append(f"💎 {dog['team']} at {american_line(dog_p)} may offer value — model gives {dog_p*100:.0f}%")
-                        for msg in flag_msgs:
-                            st.markdown(f'<small style="color:#f87171">{msg}</small>', unsafe_allow_html=True)
+                    for s1, s2 in BRACKET_PAIRS:
+                        t1_rows = region_data[region_data["seed"]==s1]
+                        t2_rows = region_data[region_data["seed"]==s2]
+                        if len(t1_rows)==0 or len(t2_rows)==0: continue
 
-                        # ── Log result + user pick ───────────────────────────────────
-                        if not result_winner:
-                            st.markdown("---")
-                            st.markdown('<small style="color:#94a3b8">Log result:</small>', unsafe_allow_html=True)
-                            rb1, rb2 = st.columns(2)
+                        t1 = t1_rows.iloc[0]
+                        t2 = t2_rows.iloc[0]
+                        c1 = safe_f(t1.get("contender_score",50))
+                        c2 = safe_f(t2.get("contender_score",50))
+                        p1 = win_prob_sigmoid(c1, c2)
+                        p2 = 1 - p1
 
-                            # Optional: user's own pick (if they disagreed with model)
-                            user_disagree = st.checkbox(
-                                f"🙅 I had the other team",
-                                key=f"dis_{matchup_key}",
-                                help="Check if you disagreed with Statlasberg's pick")
-                            user_pick_val = None
-                            user_note_val = ""
-                            if user_disagree:
-                                dog_team = t2["team"] if fav["team"] == t1["team"] else t1["team"]
-                                user_pick_val = dog_team
-                                user_note_val = st.text_input(
-                                    "Why? (optional — Statlasberg will analyze it after):",
-                                    key=f"unote_{matchup_key}",
-                                    placeholder="e.g. better guard matchup, they're peaking at the right time…")
+                        # Public/historical line
+                        hist_p1 = HIST_SEED_WIN_PCT.get((s1, s2), 0.5)
 
-                            def _log_result(winner_team):
-                                rec = {
-                                    "matchup":    matchup_key,
-                                    "winner":     winner_team,
-                                    "teams":      [t1["team"], t2["team"]],
-                                    "model_pick": fav["team"],
-                                    "fav_team":   fav["team"],
-                                    "user_pick":  user_pick_val,
-                                    "user_note":  user_note_val,
-                                    "timestamp":  str(datetime.now().date())}
-                                st.session_state.results.append(rec)
-                                os.makedirs("data/tournament_2026", exist_ok=True)
-                                pd.DataFrame(st.session_state.results).to_csv(RESULTS_PATH, index=False)
-                                st.rerun()
+                        fav_s  = s1 if p1 >= p2 else s2
+                        dog_s  = s2 if p1 >= p2 else s1
+                        fav    = t1 if p1 >= p2 else t2
+                        dog    = t2 if p1 >= p2 else t1
+                        fav_p  = max(p1, p2)
+                        dog_p  = min(p1, p2)
+                        fav_c  = c1 if p1 >= p2 else c2
+                        dog_c  = c2 if p1 >= p2 else c1
 
-                            if rb1.button(f"✅ {t1['team']} won", key=f"r1_{matchup_key}"):
-                                _log_result(t1["team"])
-                            if rb2.button(f"✅ {t2['team']} won", key=f"r2_{matchup_key}"):
-                                _log_result(t2["team"])
+                        matchup_key = f"{region}_{s1}v{s2}"
+                        result_rec  = results_dict.get(matchup_key, {})
+                        result_winner = result_rec.get("winner")
 
-                        else:
-                            correct_str   = "✅ Called it." if result_winner == fav["team"] else "❌ Wrong."
-                            user_pick_rec = result_rec.get("user_pick")
-                            user_note_rec = result_rec.get("user_note", "")
+                        hl1 = hot_label(t1)
+                        hl2 = hot_label(t2)
 
-                            # Model verdict line
-                            st.markdown(
-                                f'<div style="background:#1e293b;border-radius:6px;padding:6px 10px;margin-top:6px">'
-                                f'<strong style="color:#f1f5f9">Result: {result_winner} won — Statlasberg {correct_str}</strong>'
-                                f'</div>', unsafe_allow_html=True)
+                        # Model vs seed-baseline edge (NOT live sportsbook lines)
+                        edge = abs(p1 - hist_p1)
+                        edge_tag = ""
+                        if p1 > hist_p1 + 0.12:
+                            edge_tag = f"<span style='color:#4ade80;font-size:0.7rem;font-weight:700'> 📐 Model diverges — higher on #{s1}</span>"
+                        elif p1 < hist_p1 - 0.12:
+                            edge_tag = f"<span style='color:#f59e0b;font-size:0.7rem;font-weight:700'> 📐 Model diverges — higher on #{s2}</span>"
 
-                            # User pick verdict (shown when they logged a disagreement)
-                            if user_pick_rec:
-                                user_correct = (user_pick_rec == result_winner)
-                                u_icon = "✅" if user_correct else "❌"
-                                if user_correct and result_winner != fav["team"]:
-                                    u_verdict = "You were right, I was wrong. Good call."
-                                elif not user_correct and result_winner == fav["team"]:
-                                    u_verdict = "I was right, you were wrong. Trust the model."
-                                else:
-                                    u_verdict = "We were both wrong. March Madness things."
-                                note_line = f'<br/><span style="color:#94a3b8;font-size:0.78rem">Your reasoning: <em>"{user_note_rec}"</em></span>' if user_note_rec else ""
+                        result_badge = ""
+                        if result_winner:
+                            correct = result_winner == fav["team"]
+                            result_badge = " ✅" if correct else " ❌"
+
+                        with st.expander(f"#{s1} vs #{s2}{result_badge}", expanded=False):
+                            # Matchup header
+                            mh1, mh2 = st.columns(2)
+                            with mh1:
+                                hl1_span = f" <span style='color:#4ade80;font-size:0.72rem'>{hl1}</span>" if hl1 else ""
+                                seed1_bg = "#f97316" if fav_s == s1 else "#475569"
+                                bar1_bg  = "#4ade80" if p1 > p2 else "#64748b"
+                                txt1_col = "#4ade80" if p1 > p2 else "#94a3b8"
                                 st.markdown(
-                                    f'<div style="background:#172233;border-left:3px solid {"#4ade80" if user_correct else "#f87171"};'
-                                    f'border-radius:4px;padding:6px 10px;margin-top:4px;font-size:0.85rem">'
-                                    f'{u_icon} <strong style="color:#f1f5f9">Your pick: {user_pick_rec}</strong> — {u_verdict}'
-                                    f'{note_line}</div>', unsafe_allow_html=True)
+                                    f'<div style="padding:8px;background:#131820;border-radius:6px">'
+                                    f'<span style="background:{seed1_bg};color:white;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:0.68rem;font-weight:800;margin-right:6px">{s1}</span>'
+                                    f'<strong style="color:#f1f5f9;font-size:0.95rem">{t1["team"]}</strong>{hl1_span}'
+                                    f'<br/><small style="color:#94a3b8">Score: {c1:.1f}</small>'
+                                    f'<div style="background:#1e293b;border-radius:3px;height:4px;margin:4px 0">'
+                                    f'<div style="width:{int(p1*100)}%;background:{bar1_bg};height:4px;border-radius:3px"></div></div>'
+                                    f'<span style="color:{txt1_col};font-weight:700;font-size:0.9rem">{p1*100:.0f}% · {american_line(p1)}</span>'
+                                    f'</div>',
+                                    unsafe_allow_html=True)
+                                t1_name_str = t1["team"]
+                                if st.button(f"🔍 {t1_name_str} Deep Dive", key=f"dd1_{matchup_key}", use_container_width=True):
+                                    st.session_state["team_selectbox"] = t1_name_str
+                                    st.session_state.dive_team = t1_name_str
+                                    st.rerun()
+                            with mh2:
+                                hl2_span = f" <span style='color:#4ade80;font-size:0.72rem'>{hl2}</span>" if hl2 else ""
+                                seed2_bg = "#f97316" if fav_s == s2 else "#475569"
+                                bar2_bg  = "#4ade80" if p2 > p1 else "#64748b"
+                                txt2_col = "#4ade80" if p2 > p1 else "#94a3b8"
+                                st.markdown(
+                                    f'<div style="padding:8px;background:#131820;border-radius:6px">'
+                                    f'<span style="background:{seed2_bg};color:white;border-radius:50%;width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;font-size:0.68rem;font-weight:800;margin-right:6px">{s2}</span>'
+                                    f'<strong style="color:#f1f5f9;font-size:0.95rem">{t2["team"]}</strong>{hl2_span}'
+                                    f'<br/><small style="color:#94a3b8">Score: {c2:.1f}</small>'
+                                    f'<div style="background:#1e293b;border-radius:3px;height:4px;margin:4px 0">'
+                                    f'<div style="width:{int(p2*100)}%;background:{bar2_bg};height:4px;border-radius:3px"></div></div>'
+                                    f'<span style="color:{txt2_col};font-weight:700;font-size:0.9rem">{p2*100:.0f}% · {american_line(p2)}</span>'
+                                    f'</div>',
+                                    unsafe_allow_html=True)
+                                t2_name_str = t2["team"]
+                                if st.button(f"🔍 {t2_name_str} Deep Dive", key=f"dd2_{matchup_key}", use_container_width=True):
+                                    st.session_state["team_selectbox"] = t2_name_str
+                                    st.session_state.dive_team = t2_name_str
+                                    st.rerun()
 
-                            if st.button("↩ Clear result", key=f"clr_{matchup_key}"):
-                                st.session_state.results = [r for r in st.session_state.results if r["matchup"] != matchup_key]
-                                st.rerun()
+                            # Model line vs seed baseline (not live sportsbook lines)
+                            st.markdown(
+                                f'<div style="background:#1e293b;border-radius:6px;padding:6px 10px;margin:5px 0;font-size:0.8rem">'
+                                f'<strong style="color:#b0bbd0">🎯 Statlasberg Line:</strong> '
+                                f'<span style="color:#f1f5f9">#{s1} <strong style="color:#4ade80">{american_line(p1)}</strong> &nbsp;/&nbsp; '
+                                f'#{s2} <strong style="color:#4ade80">{american_line(p2)}</strong></span>'
+                                f'&nbsp;&nbsp;<span style="color:#475569;font-size:0.72rem">Seed baseline: #{s1} {american_line(hist_p1)} / #{s2} {american_line(1-hist_p1)}</span>'
+                                f'{edge_tag}'
+                                f'</div>'
+                                f'<div style="font-size:0.68rem;color:#475569;padding:2px 10px">For live sportsbook lines check DraftKings · FanDuel · ESPN Bet</div>',
+                                unsafe_allow_html=True)
+
+                            # Style matchup insight
+                            insight = style_matchup_insight(t1, t2)
+                            st.markdown(f'<div style="background:#1a2a1a;border-left:3px solid #16a34a;border-radius:4px;padding:6px 10px;margin:5px 0;color:#d1fae5;font-size:0.82rem">💡 {insight}</div>', unsafe_allow_html=True)
+
+                            # Clutch factor
+                            fav_cl = safe_f(fav.get("clutch_score",50))
+                            dog_cl = safe_f(dog.get("clutch_score",50))
+                            fav_cwp = safe_f(fav.get("close_win_pct",0.5))
+                            dog_cwp = safe_f(dog.get("close_win_pct",0.5))
+                            if abs(fav_cl - dog_cl) > 8:
+                                cl_edge = fav["team"] if fav_cl > dog_cl else dog["team"]
+                                st.markdown(f'<small style="color:#fbbf24">⚡ GW/Clutch edge: <strong>{cl_edge}</strong> (clutch score diff: {abs(fav_cl-dog_cl):.0f} pts) — ~3-5% factor in close games</small>', unsafe_allow_html=True)
+
+                            # Model flags
+                            flag_msgs = []
+                            if fav.get("fraud_favorite_flag", False): flag_msgs.append(f"⚠️ {fav['team']} is a Fraud Favorite — upset risk elevated")
+                            if dog.get("dangerous_low_seed_flag", False): flag_msgs.append(f"💥 {dog['team']} is a Dangerous Low Seed")
+                            if dog.get("cinderella_flag", False): flag_msgs.append(f"🪄 {dog['team']} has Cinderella traits — don't sleep on them")
+                            if dog_p > 0.38: flag_msgs.append(f"💎 {dog['team']} at {american_line(dog_p)} may offer value — model gives {dog_p*100:.0f}%")
+                            for msg in flag_msgs:
+                                st.markdown(f'<small style="color:#f87171">{msg}</small>', unsafe_allow_html=True)
+
+                            # ── Log result + user pick ───────────────────────────────────
+                            if not result_winner:
+                                st.markdown("---")
+                                st.markdown('<small style="color:#94a3b8">Log result:</small>', unsafe_allow_html=True)
+                                rb1, rb2 = st.columns(2)
+
+                                # Optional: user's own pick (if they disagreed with model)
+                                user_disagree = st.checkbox(
+                                    f"🙅 I had the other team",
+                                    key=f"dis_{matchup_key}",
+                                    help="Check if you disagreed with Statlasberg's pick")
+                                user_pick_val = None
+                                user_note_val = ""
+                                if user_disagree:
+                                    dog_team = t2["team"] if fav["team"] == t1["team"] else t1["team"]
+                                    user_pick_val = dog_team
+                                    user_note_val = st.text_input(
+                                        "Why? (optional — Statlasberg will analyze it after):",
+                                        key=f"unote_{matchup_key}",
+                                        placeholder="e.g. better guard matchup, they're peaking at the right time…")
+
+                                def _log_result(winner_team):
+                                    rec = {
+                                        "matchup":    matchup_key,
+                                        "winner":     winner_team,
+                                        "teams":      [t1["team"], t2["team"]],
+                                        "model_pick": fav["team"],
+                                        "fav_team":   fav["team"],
+                                        "user_pick":  user_pick_val,
+                                        "user_note":  user_note_val,
+                                        "timestamp":  str(datetime.now().date())}
+                                    st.session_state.results.append(rec)
+                                    os.makedirs("data/tournament_2026", exist_ok=True)
+                                    pd.DataFrame(st.session_state.results).to_csv(RESULTS_PATH, index=False)
+                                    st.rerun()
+
+                                t1n_btn = t1["team"]
+                                t2n_btn = t2["team"]
+                                if rb1.button(f"✅ {t1n_btn} won", key=f"r1_{matchup_key}"):
+                                    _log_result(t1n_btn)
+                                if rb2.button(f"✅ {t2n_btn} won", key=f"r2_{matchup_key}"):
+                                    _log_result(t2n_btn)
+
+                            else:
+                                correct_str   = "✅ Called it." if result_winner == fav["team"] else "❌ Wrong."
+                                user_pick_rec = result_rec.get("user_pick")
+                                user_note_rec = result_rec.get("user_note", "")
+
+                                # Model verdict line
+                                st.markdown(
+                                    f'<div style="background:#1e293b;border-radius:6px;padding:6px 10px;margin-top:6px">'
+                                    f'<strong style="color:#f1f5f9">Result: {result_winner} won — Statlasberg {correct_str}</strong>'
+                                    f'</div>', unsafe_allow_html=True)
+
+                                # User pick verdict (shown when they logged a disagreement)
+                                if user_pick_rec:
+                                    user_correct = (user_pick_rec == result_winner)
+                                    u_icon = "✅" if user_correct else "❌"
+                                    if user_correct and result_winner != fav["team"]:
+                                        u_verdict = "You were right, I was wrong. Good call."
+                                    elif not user_correct and result_winner == fav["team"]:
+                                        u_verdict = "I was right, you were wrong. Trust the model."
+                                    else:
+                                        u_verdict = "We were both wrong. March Madness things."
+                                    note_line = f'<br/><span style="color:#94a3b8;font-size:0.78rem">Your reasoning: <em>"{user_note_rec}"</em></span>' if user_note_rec else ""
+                                    st.markdown(
+                                        f'<div style="background:#172233;border-left:3px solid {"#4ade80" if user_correct else "#f87171"};'
+                                        f'border-radius:4px;padding:6px 10px;margin-top:4px;font-size:0.85rem">'
+                                        f'{u_icon} <strong style="color:#f1f5f9">Your pick: {user_pick_rec}</strong> — {u_verdict}'
+                                        f'{note_line}</div>', unsafe_allow_html=True)
+
+                                if st.button("↩ Clear result", key=f"clr_{matchup_key}"):
+                                    st.session_state.results = [r for r in st.session_state.results if r["matchup"] != matchup_key]
+                                    st.rerun()
+
+        with br_r32:
+            st.caption(f"Projected Round of 32 — model picks based on contender scores")
+            if not all_round_matchups["R32"]:
+                st.info("Bracket data needed to project Round of 32.")
+            else:
+                for reg in ["East", "South", "West", "Midwest"]:
+                    reg_matchups = [(t1,t2,w,l,r) for t1,t2,w,l,r in all_round_matchups["R32"] if r == reg]
+                    if reg_matchups:
+                        st.markdown(f'<div style="color:#ff8c3a;font-weight:800;font-size:0.95rem;border-bottom:2px solid #f97316;padding-bottom:3px;margin-bottom:10px;text-transform:uppercase">{reg} Region</div>', unsafe_allow_html=True)
+                        for idx, (t1n, t2n, w, l, r) in enumerate(reg_matchups):
+                            _render_matchup_exp(t1n, t2n, w, l, r, f"r32_{reg}_{idx}")
+                        st.markdown("")
+
+        with br_s16:
+            st.caption("Projected Sweet 16 — regional semifinal matchups")
+            if not all_round_matchups["S16"]:
+                st.info("Bracket data needed to project Sweet 16.")
+            else:
+                for reg in ["East", "South", "West", "Midwest"]:
+                    reg_matchups = [(t1,t2,w,l,r) for t1,t2,w,l,r in all_round_matchups["S16"] if r == reg]
+                    if reg_matchups:
+                        st.markdown(f'<div style="color:#ff8c3a;font-weight:800;font-size:0.95rem;border-bottom:2px solid #f97316;padding-bottom:3px;margin-bottom:10px;text-transform:uppercase">{reg} Region</div>', unsafe_allow_html=True)
+                        for idx, (t1n, t2n, w, l, r) in enumerate(reg_matchups):
+                            _render_matchup_exp(t1n, t2n, w, l, r, f"s16_{reg}_{idx}")
+                        st.markdown("")
+
+        with br_e8:
+            st.caption("Projected Elite 8 — regional final matchups")
+            if not all_round_matchups["E8"]:
+                st.info("Bracket data needed to project Elite 8.")
+            else:
+                e8_cols = st.columns(2)
+                for idx, (t1n, t2n, w, l, r) in enumerate(all_round_matchups["E8"]):
+                    with e8_cols[idx % 2]:
+                        st.markdown(f'<div style="color:#ff8c3a;font-weight:800;font-size:0.95rem;border-bottom:2px solid #f97316;padding-bottom:3px;margin-bottom:10px;text-transform:uppercase">{r} Region Championship</div>', unsafe_allow_html=True)
+                        _render_matchup_exp(t1n, t2n, w, l, r, f"e8_{r}_{idx}")
+
+        with br_ff:
+            st.caption("Projected Final Four — national semifinal matchups")
+            if not all_round_matchups["FF"]:
+                st.info("Bracket data needed to project Final Four.")
+            else:
+                ff_cols = st.columns(2)
+                for idx, (t1n, t2n, w, l, r) in enumerate(all_round_matchups["FF"]):
+                    with ff_cols[idx]:
+                        st.markdown(f'<div style="color:#fbbf24;font-weight:800;font-size:1rem;border-bottom:2px solid #f59e0b;padding-bottom:3px;margin-bottom:10px">🏅 Semifinal {idx+1}</div>', unsafe_allow_html=True)
+                        _render_matchup_exp(t1n, t2n, w, l, "National", f"ff_{idx}")
+
+        with br_champ:
+            st.caption("Projected Championship Game")
+            if not all_round_matchups["Championship"]:
+                st.info("Bracket data needed to project Championship.")
+            else:
+                for idx, (t1n, t2n, w, l, r) in enumerate(all_round_matchups["Championship"]):
+                    st.markdown(f'<div style="text-align:center;font-size:1.5rem;font-weight:900;color:#fbbf24;margin:20px 0">🏆 Championship Game</div>', unsafe_allow_html=True)
+                    _render_matchup_exp(t1n, t2n, w, l, "National", "champ_0")
+                    t1_row = in_bracket[in_bracket["team"] == t1n]
+                    t2_row = in_bracket[in_bracket["team"] == t2n]
+                    if len(t1_row) and len(t2_row):
+                        w_row = in_bracket[in_bracket["team"] == w]
+                        if len(w_row):
+                            wp = w_row.iloc[0]
+                            w_cs = safe_f(wp.get("contender_score", 50))
+                            w_seed = int(wp.get("seed")) if pd.notna(wp.get("seed")) else 0
+                            st.markdown(
+                                f'<div style="text-align:center;background:linear-gradient(135deg,#1a2a1a,#0f2b0f);border:2px solid #4ade80;'
+                                f'border-radius:12px;padding:20px;margin-top:16px">'
+                                f'<div style="font-size:2rem">🏆</div>'
+                                f'<div style="color:#4ade80;font-weight:900;font-size:1.4rem;margin:8px 0">{w}</div>'
+                                f'<div style="color:#94a3b8;font-size:0.9rem">#{w_seed} seed · Score: {w_cs:.1f}</div>'
+                                f'<div style="color:#fbbf24;font-size:0.85rem;margin-top:6px">Statlasberg\'s 2026 National Champion</div>'
+                                f'</div>',
+                                unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1751,45 +1979,82 @@ with tab7:
             if recent_fin:
                 st.markdown("---")
                 st.markdown('<div class="section-header">✅ Final Scores</div>', unsafe_allow_html=True)
-                fin_cols = st.columns(min(4, len(recent_fin)))
-                for idx, g in enumerate(recent_fin[:4]):
+                for g in recent_fin[:8]:
                     t1 = g["team1"]; t2 = g["team2"]
                     winner = t1 if t1["score"] > t2["score"] else t2
                     loser  = t2 if t1["score"] > t2["score"] else t1
-                    pregame_p, _, _ = model_pregame_prob(t1["name"], t2["name"], in_bracket)
+                    pregame_p, s1, s2 = model_pregame_prob(t1["name"], t2["name"], in_bracket)
                     model_got_it = (pregame_p >= 0.5) == (t1["score"] > t2["score"])
                     verdict = "✅ Model correct" if model_got_it else "❌ Upset — model wrong"
-                    with fin_cols[idx % 4]:
+                    model_fav = t1["name"] if pregame_p >= 0.5 else t2["name"]
+                    model_fav_p = max(pregame_p, 1 - pregame_p)
+                    with st.expander(
+                        f"{'✅' if model_got_it else '❌'} {winner['name']} {winner['score']} def. {loser['name']} {loser['score']}  |  {verdict}",
+                        expanded=False
+                    ):
+                        fc1, fc2 = st.columns(2)
+                        for col, team, score, is_winner_flag in [
+                            (fc1, t1, t1["score"], t1["score"] > t2["score"]),
+                            (fc2, t2, t2["score"], t2["score"] > t1["score"])
+                        ]:
+                            with col:
+                                cs = s1 if team is t1 else s2
+                                bdr = "#4ade80" if is_winner_flag else "#374151"
+                                st.markdown(
+                                    f'<div style="background:#131820;border:2px solid {bdr};border-radius:8px;padding:10px">'
+                                    f'<div style="font-size:1.1rem;font-weight:800;color:#f1f5f9">{team["name"]}</div>'
+                                    f'<div style="font-size:2rem;font-weight:900;color:{"#4ade80" if is_winner_flag else "#f1f5f9"}">{score}</div>'
+                                    f'<div style="color:#94a3b8;font-size:0.78rem">{team.get("record","")}</div>'
+                                    f'<div style="color:#64748b;font-size:0.78rem;margin-top:4px">Model score: {cs:.1f}</div>'
+                                    f'</div>', unsafe_allow_html=True)
+                                tname = team["name"]
+                                if st.button(f"🔍 {tname} Deep Dive", key=f"fin_dd_{g['event_id']}_{tname}", use_container_width=True):
+                                    st.session_state["team_selectbox"] = tname
+                                    st.session_state.dive_team = tname
+                                    st.rerun()
+                        insight = style_matchup_insight_by_name(t1["name"], t2["name"], in_bracket)
+                        if insight:
+                            st.markdown(f'<div style="background:#1a2a1a;border-left:3px solid #16a34a;border-radius:4px;padding:6px 10px;margin:8px 0;color:#d1fae5;font-size:0.82rem">💡 Pre-game model insight: {insight}</div>', unsafe_allow_html=True)
                         st.markdown(
-                            f'<div class="team-card">'
-                            f'<strong style="color:#4ade80">{winner["name"]} {winner["score"]}</strong>'
-                            f'<span style="color:#64748b"> def. </span>'
-                            f'{loser["name"]} {loser["score"]}'
-                            f'<br/><small style="color:#94a3b8">{verdict}</small>'
-                            f'</div>',
-                            unsafe_allow_html=True)
+                            f'<div style="background:#1e293b;border-radius:6px;padding:8px 12px;margin-top:6px;font-size:0.85rem">'
+                            f'📊 Statlasberg pre-game pick: <strong style="color:#f1f5f9">{model_fav}</strong> '
+                            f'({model_fav_p*100:.0f}%) — {verdict}'
+                            f'</div>', unsafe_allow_html=True)
 
             # ── UPCOMING ─────────────────────────────────────────────────────
             if upcoming:
                 st.markdown("---")
                 st.markdown('<div class="section-header">🕐 Upcoming Games — Pre-Game Model Lines</div>', unsafe_allow_html=True)
-                up_cols = st.columns(min(3, len(upcoming)))
-                for idx, g in enumerate(upcoming[:6]):
+                for g in upcoming[:8]:
                     t1 = g["team1"]; t2 = g["team2"]
                     pregame_p, s1, s2 = model_pregame_prob(t1["name"], t2["name"], in_bracket)
-                    fav   = t1["name"] if pregame_p >= 0.5 else t2["name"]
-                    fav_p = max(pregame_p, 1-pregame_p)
-                    with up_cols[idx % 3]:
-                        st.markdown(
-                            f'<div class="team-card">'
-                            f'<strong style="color:#f1f5f9">{t1["name"]}</strong>'
-                            f'<span style="color:#64748b"> vs </span>'
-                            f'<strong style="color:#f1f5f9">{t2["name"]}</strong>'
-                            f'<br/><small style="color:#94a3b8">Model picks: <strong style="color:#4ade80">{fav}</strong> '
-                            f'({fav_p*100:.0f}%) · {american_line(fav_p if fav==t1["name"] else 1-fav_p)}</small>'
-                            f'<br/><small style="color:#64748b">Scores: {t1["name"]} {s1:.1f} vs {t2["name"]} {s2:.1f}</small>'
-                            f'</div>',
-                            unsafe_allow_html=True)
+                    fav_name = t1["name"] if pregame_p >= 0.5 else t2["name"]
+                    fav_p = max(pregame_p, 1 - pregame_p)
+                    with st.expander(
+                        f"🕐 {t1['name']} vs {t2['name']}  —  Model pick: {fav_name} ({fav_p*100:.0f}%)",
+                        expanded=False
+                    ):
+                        uc1, uc2 = st.columns(2)
+                        for col, team, cs, p in [(uc1, t1, s1, pregame_p), (uc2, t2, s2, 1-pregame_p)]:
+                            with col:
+                                is_fav = team["name"] == fav_name
+                                bar_col = "#4ade80" if is_fav else "#64748b"
+                                st.markdown(
+                                    f'<div style="background:#131820;border:2px solid {"#f97316" if is_fav else "#374151"};border-radius:8px;padding:10px">'
+                                    f'<div style="font-size:1rem;font-weight:800;color:#f1f5f9">{team["name"]} {"⭐ Model Pick" if is_fav else ""}</div>'
+                                    f'<div style="background:#1e293b;border-radius:3px;height:6px;margin:6px 0">'
+                                    f'<div style="width:{int(p*100)}%;background:{bar_col};height:6px;border-radius:3px"></div></div>'
+                                    f'<div style="color:{bar_col};font-weight:700;font-size:1rem">{p*100:.0f}% · {american_line(p)}</div>'
+                                    f'<div style="color:#64748b;font-size:0.78rem;margin-top:4px">Model score: {cs:.1f}</div>'
+                                    f'</div>', unsafe_allow_html=True)
+                                tname = team["name"]
+                                if st.button(f"🔍 {tname} Deep Dive", key=f"up_dd_{g['event_id']}_{tname}", use_container_width=True):
+                                    st.session_state["team_selectbox"] = tname
+                                    st.session_state.dive_team = tname
+                                    st.rerun()
+                        insight = style_matchup_insight_by_name(t1["name"], t2["name"], in_bracket)
+                        if insight:
+                            st.markdown(f'<div style="background:#1a2a1a;border-left:3px solid #16a34a;border-radius:4px;padding:6px 10px;margin:8px 0;color:#d1fae5;font-size:0.82rem">💡 {insight}</div>', unsafe_allow_html=True)
 
         st.markdown("---")
         st.caption("Data: ESPN public API · Refresh rate: manual or 60s auto · In-game probability blends model pre-game score (dominates early) with live score differential (dominates late). Model principles stay constant — late-game score doesn't override the model, it updates it.")
@@ -2785,9 +3050,8 @@ def statlasberg_qa(q, bkt_df, s16, e8, ff, champion, champs_df, results_list=Non
 # TAB 8 — ASK STATLASBERG  (Q&A + Model Comparison)
 # ─────────────────────────────────────────────────────────────────────────────
 with tab8:
-    st.markdown('<div class="section-header">🤖 Ask Statlasberg</div>', unsafe_allow_html=True)
-    st.caption("Statlasberg is a basketball junkie. Direct, confident, and trash-talk capable. "
-               "Ask about picks, matchups, eye test — or just talk some ball. He bites back. 🏀")
+    st.markdown('<div class="section-header">📊 Model Comparison</div>', unsafe_allow_html=True)
+    st.caption("How does Statlasberg compare to KenPom-proxy and seed baseline? Disagreements often reveal where the model sees value.")
 
     # ── Model Comparison ──────────────────────────────────────────────────────
     with st.expander("📊 Model Comparison — Statlasberg vs KenPom-Proxy vs Seed Baseline", expanded=True):
@@ -2895,108 +3159,6 @@ with tab8:
                         unsafe_allow_html=True)
         else:
             st.info("Load bracket data to see model comparisons.")
-
-    st.markdown("---")
-
-    # ── Chat Q&A ──────────────────────────────────────────────────────────────
-    st.markdown("### 💬 Talk Ball with Statlasberg")
-    st.caption("He remembers what you said last. Reference 'them' or 'that team' and he knows who you mean. "
-               "Agree, disagree, trash talk, hype your squad — he bites back. 🏀")
-
-    # Contextual suggestion chips — not a static menu, they rotate based on conversation
-    _ctx_chips = st.session_state.get("chat_context", {})
-    _chip_team = _ctx_chips.get("last_team")
-    if _chip_team:
-        analysis_chips = [
-            f"Who beats {_chip_team}?",
-            f"How far is {_chip_team} going?",
-            "Who's my champion?",
-            "Best upset picks?",
-        ]
-        banter_chips = [
-            f"I disagree on {_chip_team}",
-            f"Roast {_chip_team}",
-            "Who should I fade?",
-            "Make me laugh",
-        ]
-    else:
-        analysis_chips = [
-            "Who is your champion pick?",
-            "What's your Final Four?",
-            "Best upset picks?",
-            "Who should I fade?",
-        ]
-        banter_chips = [
-            f"Tell me about {sim_champion}" if sim_champion else "Who's the most dangerous team?",
-            "Roast a team",
-            "Make me laugh",
-            "How do you work?",
-        ]
-
-    st.markdown("<span style='color:#64748b;font-size:0.75rem'>QUICK ASKS</span>", unsafe_allow_html=True)
-    chip_cols = st.columns(4)
-    for i, sug in enumerate(analysis_chips[:4]):
-        with chip_cols[i]:
-            if st.button(sug, key=f"chip_a_{i}", use_container_width=True):
-                st.session_state.chat_history.append({"role": "user", "content": sug})
-                resp = statlasberg_qa(sug, in_bracket, sim_s16, sim_e8, sim_ff,
-                                      sim_champion, champs,
-                                      results_list=st.session_state.results)
-                st.session_state.chat_history.append({"role": "assistant", "content": resp})
-                st.rerun()
-    banter_cols = st.columns(4)
-    for i, sug in enumerate(banter_chips[:4]):
-        with banter_cols[i]:
-            if st.button(sug, key=f"chip_b_{i}", use_container_width=True):
-                st.session_state.chat_history.append({"role": "user", "content": sug})
-                resp = statlasberg_qa(sug, in_bracket, sim_s16, sim_e8, sim_ff,
-                                      sim_champion, champs,
-                                      results_list=st.session_state.results)
-                st.session_state.chat_history.append({"role": "assistant", "content": resp})
-                st.rerun()
-
-    # Chat history display
-    chat_container = st.container()
-    with chat_container:
-        for msg in st.session_state.chat_history:
-            with st.chat_message(msg["role"]):
-                st.markdown(msg["content"])
-
-    # Chat input — short, inviting placeholder
-    _placeholder = (
-        f"Reply to Statlasberg, or ask about any team, matchup, or pick..."
-        if st.session_state.chat_history else
-        f"Start here: 'Who wins it all?' · 'Tell me about {sim_champion}' · 'Roast Duke'"
-    )
-    if user_q := st.chat_input(_placeholder):
-        st.session_state.chat_history.append({"role": "user", "content": user_q})
-        response = statlasberg_qa(user_q, in_bracket, sim_s16, sim_e8, sim_ff,
-                                  sim_champion, champs,
-                                  results_list=st.session_state.results)
-        st.session_state.chat_history.append({"role": "assistant", "content": response})
-        st.rerun()
-
-    if st.session_state.chat_history:
-        _clr_col, _rst_col = st.columns([1, 4])
-        with _clr_col:
-            if st.button("🗑 Clear chat", key="clear_chat"):
-                st.session_state.chat_history = []
-                st.session_state["chat_context"] = {}
-                st.rerun()
-
-    st.markdown("---")
-    # Show logged eye-test notes if any
-    if st.session_state.eye_test_notes:
-        with st.expander(f"👁️ Your Eye-Test Notes ({len(st.session_state.eye_test_notes)} teams logged)", expanded=False):
-            for team_n, note_n in st.session_state.eye_test_notes.items():
-                st.markdown(f"**{team_n}:** *{note_n}*")
-            if st.button("Clear eye-test notes", key="clear_eye_test"):
-                st.session_state.eye_test_notes = {}
-                st.rerun()
-
-    st.caption("Statlasberg speaks from the model — not an LLM. Confident when right, autopsy when wrong. "
-               "Trash talk him, share your eye test, roast teams — he bites back. "
-               "Log results in the 🏆 Bracket tab to unlock miss analysis.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -42,6 +42,113 @@ CHAMPIONS = {
     2023: "Connecticut", 2024: "Connecticut", 2025: "Florida",
 }
 
+BRACKETS_PATH = "data/raw/tournament_history/brackets.csv"
+# First-round seed matchup pairs (higher seed vs lower seed)
+_BRACKET_PODS = [
+    ([(1, 16), (8, 9)],  [(5, 12), (4, 13)]),
+    ([(6, 11), (3, 14)], [(7, 10), (2, 15)]),
+]
+
+
+def load_bracket_field(season, brackets_path=BRACKETS_PATH):
+    """Load historical bracket field for a season.
+
+    Returns dict mapping (region, seed) → team_name, or None if unavailable.
+    """
+    if not os.path.exists(brackets_path):
+        return None
+    df = pd.read_csv(brackets_path)
+    season_df = df[df["season"] == season]
+    if len(season_df) == 0:
+        return None
+    return {
+        (str(row["region"]), int(row["seed"])): str(row["team"])
+        for _, row in season_df.iterrows()
+    }
+
+
+def _win_prob_bt(c1, c2):
+    """Sigmoid win probability. Same formula as the Streamlit app."""
+    diff = float(c1) - float(c2)
+    return 1.0 / (1.0 + np.exp(-diff / 10.0))
+
+
+def simulate_bracket(scores_df, bracket_field):
+    """Run a deterministic bracket simulation given seeded field and model scores.
+
+    Returns (predicted_champion, predicted_ff_teams).
+    """
+    score_lkp = {
+        str(row["team"]): float(row.get("contender_score", 50))
+        for _, row in scores_df.iterrows()
+    }
+
+    def pwin(t1, t2):
+        if not t1: return t2, t1
+        if not t2: return t1, t2
+        p = _win_prob_bt(score_lkp.get(t1, 50), score_lkp.get(t2, 50))
+        return (t1, t2) if p >= 0.5 else (t2, t1)
+
+    ff_teams = []
+    for region in ["East", "South", "West", "Midwest"]:
+        region_e8 = []
+        for pod_a_pairs, pod_b_pairs in _BRACKET_PODS:
+            r1w_a = []
+            for s1, s2 in pod_a_pairs:
+                t1 = bracket_field.get((region, s1), "")
+                t2 = bracket_field.get((region, s2), "")
+                if t1 or t2:
+                    w, _ = pwin(t1, t2)
+                    if w:
+                        r1w_a.append(w)
+            r1w_b = []
+            for s1, s2 in pod_b_pairs:
+                t1 = bracket_field.get((region, s1), "")
+                t2 = bracket_field.get((region, s2), "")
+                if t1 or t2:
+                    w, _ = pwin(t1, t2)
+                    if w:
+                        r1w_b.append(w)
+            # Round of 32
+            pod_a_s16 = ""
+            if len(r1w_a) == 2:
+                w, _ = pwin(r1w_a[0], r1w_a[1])
+                pod_a_s16 = w
+            elif r1w_a:
+                pod_a_s16 = r1w_a[0]
+            pod_b_s16 = ""
+            if len(r1w_b) == 2:
+                w, _ = pwin(r1w_b[0], r1w_b[1])
+                pod_b_s16 = w
+            elif r1w_b:
+                pod_b_s16 = r1w_b[0]
+            # Sweet 16
+            if pod_a_s16 and pod_b_s16:
+                w, _ = pwin(pod_a_s16, pod_b_s16)
+                region_e8.append(w)
+        # Elite 8
+        if len(region_e8) == 2:
+            w, _ = pwin(region_e8[0], region_e8[1])
+            ff_teams.append(w)
+
+    # Final Four
+    champ_teams = []
+    ff_pairs = (
+        [(ff_teams[0], ff_teams[3]), (ff_teams[1], ff_teams[2])]
+        if len(ff_teams) >= 4 else []
+    )
+    for t1, t2 in ff_pairs:
+        w, _ = pwin(t1, t2)
+        champ_teams.append(w)
+
+    # Championship
+    champion = ""
+    if len(champ_teams) == 2:
+        w, _ = pwin(champ_teams[0], champ_teams[1])
+        champion = w
+
+    return champion, ff_teams
+
 
 def run_single_season(season, data_dir=None):
     """Score one season. Returns scored DataFrame."""
@@ -104,6 +211,21 @@ def evaluate_season(scores_df, season):
     metrics["std_contender"] = round(scores_df["contender_score"].std(), 1)
     metrics["max_contender"] = round(scores_df["contender_score"].max(), 1)
 
+    # Bracket simulation accuracy (uses historical bracket seedings if available)
+    bracket_field = load_bracket_field(season)
+    if bracket_field:
+        bkt_champion, bkt_ff = simulate_bracket(scores_df, bracket_field)
+        actual_champ = CHAMPIONS.get(season, "")
+        metrics["bracket_sim_champion"] = bkt_champion
+        metrics["bracket_sim_ff"] = ", ".join(t for t in bkt_ff if t)
+        metrics["bracket_champion_correct"] = (bkt_champion == actual_champ) if actual_champ else None
+        metrics["actual_in_bracket_ff"] = (actual_champ in bkt_ff) if actual_champ else None
+    else:
+        metrics["bracket_sim_champion"] = None
+        metrics["bracket_sim_ff"] = None
+        metrics["bracket_champion_correct"] = None
+        metrics["actual_in_bracket_ff"] = None
+
     return metrics
 
 
@@ -125,10 +247,15 @@ def main():
         all_metrics.append(metrics)
 
         rank = metrics.get("champion_rank")
+        bkt_champ = metrics.get("bracket_sim_champion", "")
+        bkt_correct = metrics.get("bracket_champion_correct")
+        bkt_tag = ""
+        if bkt_champ:
+            bkt_tag = f"  │  Bracket sim: {bkt_champ} {'✓' if bkt_correct else '✗'}"
         if rank and rank > 0:
-            print(f"  {season}: Champion ranked #{rank} (score: {metrics['champion_contender_score']})")
+            print(f"  {season}: Champion ranked #{rank} (score: {metrics['champion_contender_score']}){bkt_tag}")
         else:
-            print(f"  {season}: Champion not found in data")
+            print(f"  {season}: Champion not found in data{bkt_tag}")
 
     results = pd.DataFrame(all_metrics)
     # Drop internal helper column before saving
@@ -150,6 +277,16 @@ def main():
         print(f"  Champions in top 5:  {(valid['champion_rank'] <= 5).sum()}/{len(valid)}")
         print(f"  Champions in top 10: {(valid['champion_rank'] <= 10).sum()}/{len(valid)}")
         print(f"  Worst rank:          {int(valid['champion_rank'].max())}")
+
+        # Bracket simulation accuracy
+        bkt_valid = results[results["bracket_champion_correct"].notna()].copy()
+        if len(bkt_valid) > 0:
+            bkt_correct_n = int(bkt_valid["bracket_champion_correct"].sum())
+            bkt_ff_n = int(bkt_valid["actual_in_bracket_ff"].sum()) if "actual_in_bracket_ff" in bkt_valid else 0
+            print(f"\n  Bracket sim (vs actual seedings):")
+            print(f"  Champion predicted:  {bkt_correct_n}/{len(bkt_valid)} ({bkt_correct_n/len(bkt_valid)*100:.0f}%)")
+            print(f"  Champion in sim FF:  {bkt_ff_n}/{len(bkt_valid)} ({bkt_ff_n/len(bkt_valid)*100:.0f}%)")
+
         if real_seasons:
             print(f"\n  ✅ Real Sports-Reference data: {len(real_seasons)} seasons")
         if sample_seasons:
