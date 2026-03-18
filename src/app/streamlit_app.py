@@ -9,6 +9,8 @@ import os
 import json
 import math
 import time as _time
+import random as _rng
+import re as _re
 from datetime import datetime
 try:
     import requests as _requests
@@ -262,7 +264,7 @@ def simulate_bracket_full(bkt_df):
 
     for region in ["East", "South", "West", "Midwest"]:
         reg = bkt_df[bkt_df["region"] == region]
-        s2t = {int(r["seed"]): r["team"] for _, r in reg.iterrows()}
+        s2t = {int(r["seed"]): r["team"] for _, r in reg.iterrows() if pd.notna(r.get("seed"))}
 
         region_s16 = []   # 2 S16 winners per region → play E8 game
 
@@ -334,20 +336,55 @@ def simulate_bracket_full(bkt_df):
     return sim_rounds, s16_teams, e8_teams, ff_teams, champion, runner_up
 
 # ── Data loading ──────────────────────────────────────────────────────────────
-SCORES_PATH  = "data/outputs/team_scores.csv"
-CHAMPS_PATH  = "data/outputs/simulation_results.csv"
-BRACKET_PATH = "data/brackets/bracket_2026.csv"
-COACHES_PATH = "data/coaches_2026.csv"
-RESULTS_PATH = "data/tournament_2026/results.csv"
+SCORES_PATH   = "data/outputs/team_scores.csv"
+CHAMPS_PATH   = "data/outputs/simulation_results.csv"
+BRACKET_PATH  = "data/brackets/bracket_2026.csv"
+COACHES_PATH  = "data/coaches_2026.csv"
+RESULTS_PATH  = "data/tournament_2026/results.csv"
+BACKTEST_PATH = "data/outputs/backtest_results.csv"
 
 COACH_COLS = ["team","coach","coach_years_at_school","coach_ncaa_games",
               "coach_sweet16s","coach_finalfours","first_year_coach_flag"]
 
-@st.cache_data
+@st.cache_data(ttl=60)  # re-read files every 60 s so pipeline updates show immediately
 def load_data():
     scores  = pd.read_csv(SCORES_PATH)  if os.path.exists(SCORES_PATH)  else pd.DataFrame()
     champs  = pd.read_csv(CHAMPS_PATH)  if os.path.exists(CHAMPS_PATH)  else pd.DataFrame()
     bracket = pd.read_csv(BRACKET_PATH) if os.path.exists(BRACKET_PATH) else pd.DataFrame()
+
+    # ── Normalize bracket team names to match team_scores canonical names ──
+    # When using real Sports-Reference data, team names already match between
+    # bracket and scores (both use full names like "Brigham Young", "Pittsburgh").
+    # When using sample data, abbreviated names need mapping.
+    # Smart: only apply normalization if the original name ISN'T in scores but
+    # the normalized alias IS — so real data passes through untouched.
+    _BRACKET_NORM = {
+        # Sample-data aliases → full SR names (no-ops on real data)
+        "BYU": "Brigham Young",
+        "TCU": "Texas Christian",
+        "Saint Marys CA": "Saint Mary's",
+        "Miami FL": "Miami",
+        "VCU": "Virginia Commonwealth",
+        "SMU": "Southern Methodist",
+        "St Johns NY": "St. John's",
+        "Pitt": "Pittsburgh",
+        "UMBC": "Maryland-Baltimore County",
+        "LIU": "Long Island University",
+        # Also handle common display variants that may appear in custom brackets
+        "St. Mary's": "Saint Mary's",
+        "Saint John's": "St. John's",
+        "NC State": "North Carolina State",
+        "N.C. State": "North Carolina State",
+        "Miami (FL)": "Miami",
+    }
+    if len(bracket) > 0 and "team" in bracket.columns:
+        score_teams = set(scores["team"].tolist()) if len(scores) > 0 else set()
+        def _smart_norm(t: str) -> str:
+            if t in score_teams or not score_teams:
+                return t   # already matches scores — no change needed
+            normalized = _BRACKET_NORM.get(t, t)
+            return normalized if normalized in score_teams else t
+        bracket["team"] = bracket["team"].map(_smart_norm)
     # Patch in 2026 coach data (scraper doesn't pull coaches)
     if os.path.exists(COACHES_PATH) and len(scores) > 0:
         coaches = pd.read_csv(COACHES_PATH)
@@ -399,11 +436,13 @@ if "results" not in st.session_state:
         st.session_state.results = []
 results_dict = {r["matchup"]: r for r in st.session_state.results}
 
-# Session state for deep-dive navigation and chat
+# Session state for deep-dive navigation, chat, and eye-test notes
 if "dive_team" not in st.session_state:
     st.session_state.dive_team = None
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
+if "eye_test_notes" not in st.session_state:
+    st.session_state.eye_test_notes = {}
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -411,7 +450,9 @@ with st.sidebar:
     st.markdown("*2026 March Madness Intelligence*")
     st.divider()
     bracket_teams = sorted(in_bracket["team"].tolist()) if len(in_bracket) > 0 else sorted(scores["team"].tolist())
-    selected_team = st.selectbox("🔍 Team Deep Dive", bracket_teams, key="team_selectbox")
+    # Show currently viewed team as sidebar info (selectbox lives inside the tab)
+    _cur_team = st.session_state.get("team_selectbox", bracket_teams[0] if bracket_teams else "—")
+    st.markdown(f"**🔍 Viewing:** {_cur_team}")
     st.divider()
     if len(in_bracket) > 0:
         st.markdown("**📊 Model Summary**")
@@ -458,10 +499,10 @@ if st.session_state.dive_team:
         st.rerun()
 
 # ── Main tabs ─────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "🏅 Rankings", "🎯 Sweet 16 Picks", "🔍 Team Deep Dive",
     "📊 Model vs Committee", "🎲 Championship Odds", "🏆 Bracket", "📺 Live",
-    "🤖 Ask Statlasberg"
+    "🤖 Ask Statlasberg", "📈 Model Accuracy"
 ])
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -471,33 +512,88 @@ with tab1:
     st.markdown('<div class="section-header">2026 Tournament Field — Model Rankings</div>', unsafe_allow_html=True)
 
     display_df = in_bracket.sort_values("contender_score", ascending=False).reset_index(drop=True)
-    display_df.index += 1
 
     # Add hot/trend column
     if "last10_win_pct" in display_df.columns:
         display_df["trend"] = display_df.apply(hot_label, axis=1)
 
-    def score_color(v):
-        if v >= 70: return "background-color: #14532d; color: #86efac; font-weight:700"
-        if v >= 60: return "background-color: #1a3a1a; color: #4ade80; font-weight:700"
-        if v >= 50: return "background-color: #1c2a1c; color: #86efac"
-        return "background-color: #1a1f2e; color: #cbd5e1"
+    # ── CSS: make rank-row buttons look like text links ────────────────────
+    st.markdown("""
+<style>
+div[data-testid="stButton"] > button[kind="secondary"].rank-btn {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+    color: #e2e8f0 !important;
+    font-size: 0.88rem !important;
+    font-weight: 700 !important;
+    text-align: left !important;
+    cursor: pointer !important;
+    text-decoration: underline !important;
+    text-underline-offset: 2px !important;
+}
+div[data-testid="stButton"] > button[kind="secondary"].rank-btn:hover {
+    color: #f97316 !important;
+}
+</style>""", unsafe_allow_html=True)
 
-    def risk_color(v):
-        if v >= 40: return "background-color: #450a0a; color: #fca5a5; font-weight:700"
-        if v >= 30: return "background-color: #431407; color: #fdba74; font-weight:700"
-        return "background-color: #1a1f2e; color: #86efac"
+    st.caption("👆 Click any team name to load their full breakdown in Team Deep Dive")
 
-    cols_show = ["team","region","seed","trend","contender_score","upset_risk_score",
-                 "sim_round","defense_score","clutch_score","guard_play_score","archetype"]
-    cols_avail = [c for c in cols_show if c in display_df.columns]
-    fmt_cols = {c: "{:.1f}" for c in ["contender_score","upset_risk_score","defense_score","clutch_score","guard_play_score"] if c in cols_avail}
+    # ── Column header row ──────────────────────────────────────────────────
+    hc = st.columns([0.4, 2.2, 0.55, 0.75, 1.0, 1.0, 2.2, 1.5])
+    for hdr, col in zip(["#", "TEAM", "SEED", "REGION", "SCORE", "RISK", "ARCHETYPE", "ROUND"], hc):
+        col.markdown(f"<span style='color:#64748b;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em'>{hdr}</span>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin:2px 0 4px;border-color:#1e293b'>", unsafe_allow_html=True)
 
-    styler = display_df[cols_avail].style
-    if "contender_score" in cols_avail: styler = styler.map(score_color, subset=["contender_score"])
-    if "upset_risk_score" in cols_avail: styler = styler.map(risk_color, subset=["upset_risk_score"])
-    styled = styler.format(fmt_cols).set_properties(**{"background-color":"#0e1117","color":"#f1f5f9","border":"1px solid #374151"})
-    st.dataframe(styled, use_container_width=True, height=560)
+    # ── Scrollable ranked rows ─────────────────────────────────────────────
+    for idx, row in display_df.iterrows():
+        rank    = idx + 1
+        team    = row["team"]
+        seed_v  = int(row["seed"]) if "seed" in display_df.columns and not pd.isna(row.get("seed")) else "—"
+        region  = row.get("region", "—")
+        score   = safe_f(row.get("contender_score", 50))
+        risk    = safe_f(row.get("upset_risk_score", 25))
+        arch    = row.get("archetype", "—")
+        sim_r   = row.get("sim_round", "—")
+        trend   = row.get("trend", "")
+
+        # Color logic
+        score_col = "#86efac" if score >= 70 else "#4ade80" if score >= 60 else "#94a3b8"
+        risk_col  = "#fca5a5" if risk >= 40 else "#fdba74" if risk >= 30 else "#86efac"
+        seed_bg   = "#7c3aed" if seed_v == 1 else "#1e3a8a" if isinstance(seed_v, int) and seed_v <= 4 else "#374151"
+        round_col = "#f97316" if "Champion" in str(sim_r) else "#c084fc" if "Final Four" in str(sim_r) else "#4ade80" if "Elite" in str(sim_r) else "#94a3b8"
+
+        rc = st.columns([0.4, 2.2, 0.55, 0.75, 1.0, 1.0, 2.2, 1.5])
+        with rc[0]:
+            st.markdown(f"<span style='color:#475569;font-size:0.8rem'>{rank}</span>", unsafe_allow_html=True)
+        with rc[1]:
+            trend_html = f" <span style='font-size:0.72rem;color:#4ade80'>{trend}</span>" if trend else ""
+            # Button styled as clickable link
+            if st.button(f"🔍 {team}", key=f"rank_team_{rank}", help=f"Open {team} in Team Deep Dive",
+                         use_container_width=True, type="secondary"):
+                st.session_state["team_selectbox"] = team
+                st.session_state.dive_team = team
+                st.rerun()
+        with rc[2]:
+            st.markdown(f"<span style='background:{seed_bg};color:#fff;padding:1px 5px;border-radius:3px;font-size:0.8rem;font-weight:700'>{seed_v}</span>", unsafe_allow_html=True)
+        with rc[3]:
+            st.markdown(f"<span style='color:#94a3b8;font-size:0.82rem'>{str(region)[:4]}</span>", unsafe_allow_html=True)
+        with rc[4]:
+            st.markdown(
+                f"<div style='background:#1a2230;border-radius:4px;overflow:hidden;height:20px'>"
+                f"<div style='width:{min(score,100):.0f}%;background:{score_col};height:100%;display:flex;align-items:center;padding-left:4px'>"
+                f"<span style='color:#0f172a;font-size:0.75rem;font-weight:700'>{score:.1f}</span></div></div>",
+                unsafe_allow_html=True)
+        with rc[5]:
+            st.markdown(f"<span style='color:{risk_col};font-size:0.85rem;font-weight:700'>{risk:.0f}</span>", unsafe_allow_html=True)
+        with rc[6]:
+            st.markdown(f"<span style='color:#94a3b8;font-size:0.8rem'>{arch}</span>", unsafe_allow_html=True)
+        with rc[7]:
+            st.markdown(f"<span style='color:{round_col};font-size:0.8rem'>{sim_r}</span>", unsafe_allow_html=True)
+
+        # Thin divider
+        if rank % 4 == 0:
+            st.markdown("<hr style='margin:2px 0;border-color:#1e293b;opacity:.4'>", unsafe_allow_html=True)
 
     # Flags summary
     st.markdown("---")
@@ -567,7 +663,7 @@ with tab2:
             with reg_cols[i]:
                 st.markdown(f'<div class="section-header">{region}</div>', unsafe_allow_html=True)
                 for _, row in reg_s16.sort_values("contender_score", ascending=False).iterrows():
-                    seed_val = int(row["seed"])
+                    seed_val = int(row["seed"]) if pd.notna(row.get("seed")) else 0
                     score = safe_f(row.get("contender_score", 50))
                     risk  = safe_f(row.get("upset_risk_score", 25))
                     hot   = hot_label(row)
@@ -652,7 +748,7 @@ with tab2:
                     r = row_ff.iloc[0]
                     st.markdown(
                         f'<div class="team-card">'
-                        f'<span class="seed-badge" style="background:#b45309">#{int(r["seed"])}</span> '
+                        f'<span class="seed-badge" style="background:#b45309">#{int(r["seed"]) if pd.notna(r.get("seed")) else "?"}</span> '
                         f'<strong class="team-name">{ff_t}</strong> '
                         f'<span style="color:#94a3b8;font-size:0.8rem">({r["region"]})</span>'
                         f'</div>',
@@ -662,7 +758,7 @@ with tab2:
             if sim_champion:
                 row_ch = in_bracket[in_bracket["team"]==sim_champion]
                 ch_score = safe_f(row_ch.iloc[0]["contender_score"] if len(row_ch) > 0 else 70)
-                ch_seed  = int(row_ch.iloc[0]["seed"] if len(row_ch) > 0 else 1)
+                ch_seed  = int(row_ch.iloc[0]["seed"]) if len(row_ch) > 0 and pd.notna(row_ch.iloc[0].get("seed")) else 1
                 ch_region = row_ch.iloc[0]["region"] if len(row_ch) > 0 else ""
                 st.markdown(
                     f'<div class="team-card" style="border:2px solid #f97316">'
@@ -690,7 +786,7 @@ with tab2:
             up_cols = st.columns(min(3, len(r1_upset_picks)))
             for idx, (_, row) in enumerate(r1_upset_picks.head(6).iterrows()):
                 with up_cols[idx % 3]:
-                    matchup_seed = 17 - int(row["seed"])
+                    matchup_seed = 17 - (int(row["seed"]) if pd.notna(row.get("seed")) else 8)
                     opp = in_bracket[(in_bracket["region"]==row.get("region","")) & (in_bracket["seed"]==matchup_seed)]
                     opp_name = opp.iloc[0]["team"] if len(opp) > 0 else f"#{matchup_seed} seed"
                     wp = win_prob_sigmoid(row["contender_score"], safe_f(opp.iloc[0]["contender_score"] if len(opp)>0 else 60))
@@ -698,7 +794,7 @@ with tab2:
                     hl_up_span = f" &nbsp;<span style='font-size:0.8rem'>{hl_up}</span>" if hl_up else ""
                     st.markdown(
                         f'<div class="team-card" style="border-color:#dc2626">'
-                        f'<span style="color:#f97316;font-weight:800">#{int(row["seed"])} {row["team"]}</span>'
+                        f'<span style="color:#f97316;font-weight:800">#{int(row["seed"]) if pd.notna(row.get("seed")) else "?"} {row["team"]}</span>'
                         f'<span style="color:#94a3b8"> over </span>'
                         f'<span style="color:#f1f5f9">#{matchup_seed} {opp_name}</span>{hl_up_span}'
                         f'<br/><small style="color:#4ade80">Score: {row["contender_score"]:.1f} · Model win%: {wp*100:.0f}%</small>'
@@ -710,9 +806,63 @@ with tab2:
 # TAB 3 — TEAM DEEP DIVE
 # ─────────────────────────────────────────────────────────────────────────────
 with tab3:
+    # ── Team Picker — prominent in-tab selector ───────────────────────────────
+    _all_teams   = sorted(scores["team"].tolist())
+    _show_all    = st.toggle("Show all D-I teams (not just bracket)", key="dd_show_all", value=False)
+    _pick_pool   = _all_teams if _show_all else bracket_teams
+
+    # Build seed-annotated labels: "#12 Akron (Midwest)" / "Akron" if not in bracket
+    _seed_map = {}
+    if len(in_bracket) > 0 and "seed" in in_bracket.columns:
+        for _, _br in in_bracket.iterrows():
+            _seed_map[_br["team"]] = (int(_br["seed"]), _br.get("region", ""))
+    _pick_labels = [
+        f"#{_seed_map[t][0]} {t} · {_seed_map[t][1]}" if t in _seed_map else t
+        for t in _pick_pool
+    ]
+    _label_to_team = dict(zip(_pick_labels, _pick_pool))
+
+    # Resolve default index — honours Rankings clickthrough via session state.
+    # Guard against stale session state holding a label from "all D-I" mode
+    # that no longer exists in the current (bracket-only) pool.
+    _cur = st.session_state.get("team_selectbox", _pick_pool[0] if _pick_pool else "")
+    # _cur could be either a label string or a raw team name — normalise to team name
+    _cur_team = _label_to_team.get(_cur, _cur)   # if _cur is already a label, resolve it
+    if _cur_team not in _pick_pool:              # team not in current pool → reset to first
+        _cur_team = _pick_pool[0] if _pick_pool else ""
+    _cur_label = next((lbl for lbl, tm in _label_to_team.items() if tm == _cur_team),
+                      _pick_labels[0] if _pick_labels else "")
+    _default_idx = _pick_labels.index(_cur_label) if _cur_label in _pick_labels else 0
+
+    _pick_col, _nav_col = st.columns([5, 1])
+    with _pick_col:
+        _selected_label = st.selectbox(
+            "🔍 Select team",
+            _pick_labels,
+            index=_default_idx,
+            key="team_selectbox",
+            label_visibility="collapsed",
+        )
+    with _nav_col:
+        _tidx = _pick_labels.index(_selected_label) if _selected_label in _pick_labels else 0
+        _col_prev, _col_next = st.columns(2)
+        with _col_prev:
+            if st.button("◀", key="dd_prev", help="Previous team",
+                         disabled=_tidx == 0):
+                st.session_state["team_selectbox"] = _pick_labels[_tidx - 1]
+                st.rerun()
+        with _col_next:
+            if st.button("▶", key="dd_next", help="Next team",
+                         disabled=_tidx == len(_pick_labels) - 1):
+                st.session_state["team_selectbox"] = _pick_labels[_tidx + 1]
+                st.rerun()
+
+    selected_team = _label_to_team.get(_selected_label, _pick_pool[0] if _pick_pool else "")
+    st.markdown("---")
+
     row_data = scores[scores["team"] == selected_team]
     if len(row_data) == 0:
-        st.warning(f"No data for {selected_team}")
+        st.warning(f"⚠️ No data found for **{selected_team}**. Select another team above.")
         st.stop()
     row = row_data.iloc[0]
 
@@ -770,15 +920,16 @@ with tab3:
                        help="Lower = better; D1 avg ≈ 100")
     adv_cols[2].metric("Tempo (poss/g)", f"{tempo_v:.0f}" if tempo_v > 55 else "—")
     adv_cols[3].metric("3PA Rate",       f"{three_pa_v:.1f}/g" if three_pa_v > 0 else "—")
-    adv_cols[4].metric("TO Rate",        f"{to_pct_v*100:.1f}%" if to_pct_v > 0 else "—")
+    adv_cols[4].metric("TO Rate",        f"{to_pct_v:.1f} TO/g" if to_pct_v > 0 else "—",
+                       help="Turnovers per game (D1 avg ≈ 13-14)")
 
     # ── Archetype Banner ──────────────────────────────────────────────────────
     arch       = row.get("archetype", "Solid Tournament Team") or "Solid Tournament Team"
     row_dict   = dict(row)
-    vuln_list  = [t for t in (row.get("vuln_tags", "") or "").split(" | ") if t.strip()] \
-                 or classify_vulnerabilities(row_dict)
-    str_list   = [t for t in (row.get("strength_tags", "") or "").split(" | ") if t.strip()] \
-                 or classify_strengths(row_dict)
+    _vtags = row.get("vuln_tags", ""); _vtags = str(_vtags) if pd.notna(_vtags) else ""
+    _stags = row.get("strength_tags", ""); _stags = str(_stags) if pd.notna(_stags) else ""
+    vuln_list  = [t for t in (_vtags or "").split(" | ") if t.strip()] or classify_vulnerabilities(row_dict)
+    str_list   = [t for t in (_stags or "").split(" | ") if t.strip()] or classify_strengths(row_dict)
 
     ARCH_COLORS = {
         "Blue-Blood Dominant":   ("#7c3aed", "#ede9fe"),
@@ -866,7 +1017,7 @@ with tab3:
         ax.add_patch(hoop)
         ax.add_patch(FancyArrowPatch((-3,4),(3,4),color="#e2e8f0",linewidth=2.5))
         ax.set_title(f"{selected_team} — Shooting Zones",color="#e2e8f0",fontsize=11,fontweight="bold",pad=8)
-        st.pyplot(fig, use_container_width=True)
+        st.pyplot(fig)
         plt.close(fig)
 
     # ── Radar / DNA Chart ─────────────────────────────────────────────────────
@@ -891,7 +1042,7 @@ with tab3:
         ax2.set_yticklabels([]); ax2.set_ylim(0,100)
         ax2.spines["polar"].set_color("#374151"); ax2.grid(color="#374151", linewidth=0.5)
         ax2.set_title("Sub-Score Profile", color="#f1f5f9", fontsize=11, fontweight="bold", pad=20)
-        st.pyplot(fig2, use_container_width=True)
+        st.pyplot(fig2)
         plt.close(fig2)
 
         # Key Stats
@@ -992,9 +1143,9 @@ with tab4:
             st.caption("Committee gave them a tougher draw than they deserve.")
             underseeded = model_seeded_df[model_seeded_df["seed_gap"] > 0].sort_values("seed_gap", ascending=False).head(10)
             for _, r in underseeded.iterrows():
-                actual_seed = int(r["seed"])
-                mseed = int(r["model_seed"])
-                gap = int(r["seed_gap"])
+                actual_seed = int(r["seed"]) if pd.notna(r.get("seed")) else 0
+                mseed = int(r["model_seed"]) if pd.notna(r.get("model_seed")) else 0
+                gap = int(r["seed_gap"]) if pd.notna(r.get("seed_gap")) else 0
                 bar_w = min(100, gap * 8)
                 # First-round matchup opponent (seed that sums to 17 with actual_seed)
                 opp_seed = 17 - actual_seed
@@ -1028,9 +1179,9 @@ with tab4:
             st.caption("Committee gave them a better draw than the model thinks they deserve.")
             overseeded = model_seeded_df[model_seeded_df["seed_gap"] < 0].sort_values("seed_gap").head(10)
             for _, r in overseeded.iterrows():
-                actual_seed = int(r["seed"])
-                mseed = int(r["model_seed"])
-                gap = abs(int(r["seed_gap"]))
+                actual_seed = int(r["seed"]) if pd.notna(r.get("seed")) else 0
+                mseed = int(r["model_seed"]) if pd.notna(r.get("model_seed")) else 0
+                gap = abs(int(r["seed_gap"])) if pd.notna(r.get("seed_gap")) else 0
                 bar_w = min(100, gap * 8)
                 opp_seed = 17 - actual_seed
                 opp_rows = in_bracket[(in_bracket["region"]==r["region"]) & (in_bracket["seed"]==opp_seed)]
@@ -1073,7 +1224,7 @@ with tab4:
 # TAB 5 — CHAMPIONSHIP ODDS
 # ─────────────────────────────────────────────────────────────────────────────
 with tab5:
-    st.markdown('<div class="section-header">Championship Probabilities — 10,000 Bracket Simulations</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-header">Championship Probabilities — 500,000 Bracket Simulations</div>', unsafe_allow_html=True)
 
     if len(champs) == 0:
         st.warning("Run simulation first.")
@@ -1092,7 +1243,7 @@ with tab5:
                     <div class="team-name" style="font-size:1.3rem">{r['team']}</div>
                     <div style="color:#f97316;font-size:1.7rem;font-weight:800">{r['championship_pct']:.1f}%</div>
                     <div style="color:#94a3b8;font-size:0.8rem">{seed_disp}</div>
-                    <div style="color:#b0bbd0;font-size:0.78rem">Model line: {american_line(r['championship_pct']/100 + 0.5)}</div>
+                    <div style="color:#b0bbd0;font-size:0.78rem">Model line: {american_line(r['championship_pct']/100)}</div>
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -1109,8 +1260,8 @@ with tab5:
         ax3.tick_params(colors="#f1f5f9", labelsize=9)
         for spine in ["top","right"]: ax3.spines[spine].set_visible(False)
         ax3.spines["bottom"].set_color("#374151"); ax3.spines["left"].set_color("#374151")
-        ax3.set_title("Simulated Championship Probabilities (10,000 runs)", color="#f1f5f9", fontsize=11, fontweight="bold", pad=10)
-        st.pyplot(fig3, use_container_width=True)
+        ax3.set_title("Simulated Championship Probabilities (500,000 runs)", color="#f1f5f9", fontsize=11, fontweight="bold", pad=10)
+        st.pyplot(fig3)
         plt.close(fig3)
 
         st.markdown("---")
@@ -1663,7 +1814,7 @@ def _team_strengths(row):
         tags.append("guards that'll cook you off the dribble")
     elif safe_f(row.get("guard_play_score", 50)) >= 62:
         tags.append("solid backcourt")
-    if safe_f(row.get("experience_score", 50)) >= 72:
+    if safe_f(row.get("backcourt_experience_score", row.get("experience_score", 50))) >= 72:
         tags.append("the most experienced roster on the floor")
     if safe_f(row.get("rebounding_score", 50)) >= 72:
         tags.append("owning the glass")
@@ -1745,8 +1896,8 @@ def _diagnose_miss(pick_team, actual_winner, bkt_df):
 
 
 def statlasberg_qa(q, bkt_df, s16, e8, ff, champion, champs_df, results_list=None):
-    """Statlasberg speaks hoop — confident when right, honest when wrong."""
-    import re as _re
+    """Statlasberg speaks hoop — confident, reactive, back-and-forth basketball banter."""
+    # _re and _rng imported at module level
     results_list = results_list or []
     q_low = q.lower().strip()
 
@@ -1754,9 +1905,37 @@ def statlasberg_qa(q, bkt_df, s16, e8, ff, champion, champs_df, results_list=Non
     right_picks = [r for r in results_list if r.get("model_pick") == r.get("winner")]
     n_total     = len(results_list)
 
+    # ── Conversation context (session state carries last team/topic discussed) ──
+    import streamlit as _st
+    _ctx = _st.session_state.get("chat_context", {})
+    _last_team   = _ctx.get("last_team")
+    _last_topic  = _ctx.get("last_topic", "")
+    _last_stance = _ctx.get("last_stance", "")   # "liked" | "faded" | "neutral"
+    _turns       = _ctx.get("turns", 0)
+
+    def _save_ctx(team=None, topic=None, stance=None):
+        _st.session_state["chat_context"] = {
+            "last_team":   team  or _last_team,
+            "last_topic":  topic or _last_topic,
+            "last_stance": stance or _last_stance,
+            "turns":       _turns + 1,
+        }
+
+    # ── Pronouns / context resolution ─────────────────────────────────────────
+    # If user says "them", "they", "that team" — resolve to last mentioned team
+    _pronoun_words = ["them", "they", "that team", "those guys", "that squad",
+                      "their", "those guys", "this team", "these guys"]
+    _is_pronoun_ref = any(w in q_low for w in _pronoun_words) and _last_team
+    if _is_pronoun_ref:
+        q_low = q_low  # keep original but resolve via _last_team in find_row fallback
+
     def find_row(query):
-        """Fuzzy team name lookup."""
+        """Fuzzy team name lookup — falls back to last-mentioned team for pronoun refs."""
         q_ = query.strip().lower()
+        # Pronoun resolution — "them", "they", "that team" → last mentioned
+        if any(w == q_.strip() or q_.strip().startswith(w) for w in _pronoun_words) and _last_team:
+            hit = bkt_df[bkt_df["team"] == _last_team]
+            if len(hit): return hit.iloc[0]
         for _, row in bkt_df.iterrows():
             t_ = row["team"].lower()
             if q_ == t_ or q_ in t_ or t_ in q_:
@@ -1766,7 +1945,52 @@ def statlasberg_qa(q, bkt_df, s16, e8, ff, champion, champs_df, results_list=Non
         for _, row in bkt_df.iterrows():
             if any(w in row["team"].lower() for w in words):
                 return row
+        # last resort — last mentioned team if pronouns present in full original query
+        if _is_pronoun_ref and _last_team:
+            hit = bkt_df[bkt_df["team"] == _last_team]
+            if len(hit): return hit.iloc[0]
         return None
+
+    # ── Personality pools — vary responses so nothing feels scripted ───────────
+    def _follow_up(team=None):
+        """Return a short follow-up prompt to keep conversation going."""
+        opts_team = [
+            f"Who do you have them beating in the second round?",
+            f"You riding with them all the way, or just first weekend?",
+            f"You taking them in your bracket?",
+            f"What's your gut saying about their path?",
+        ]
+        opts_gen = [
+            "Who else you looking at?",
+            "What's your bracket looking like overall?",
+            "Any other teams you want to break down?",
+            "Who you fading this year?",
+            "Any sleepers you like that I haven't mentioned?",
+        ]
+        pool = opts_team if team else opts_gen
+        return f"\n\n*{_rng.choice(pool)}*"
+
+    def _pushback(team_name, score):
+        """Give a short opinion-based pushback line."""
+        if score >= 72:
+            opts = [
+                f"The numbers back it up — {team_name} is built for this.",
+                f"I know you might not love it but {team_name} checks every box I care about.",
+                f"This isn't a homer pick, this is just what the data says.",
+            ]
+        elif score >= 58:
+            opts = [
+                f"I hear you, but don't sleep on them — they're more dangerous than their seed suggests.",
+                f"They're not flashy but they know how to win games that matter.",
+                f"People are underrating them and that's exactly how upsets happen.",
+            ]
+        else:
+            opts = [
+                f"Yeah I'm not here to die on that hill either. They're risky.",
+                f"Look, they could surprise someone but I wouldn't bet the house.",
+                f"Fair criticism. Their numbers don't scream deep run.",
+            ]
+        return _rng.choice(opts)
 
     # ── Record / How are you doing ────────────────────────────────────────────
     if any(w in q_low for w in ["your record", "how many right", "accuracy", "how are your picks",
@@ -1909,10 +2133,18 @@ def statlasberg_qa(q, bkt_df, s16, e8, ff, champion, champs_df, results_list=Non
         str_line  = (", ".join(strengths[:3]) + " — ") if strengths else ""
         seed      = int(row.iloc[0]["seed"]) if len(row) and not pd.isna(row.iloc[0].get("seed")) else "—"
 
-        return (f"🏆 **{champion}**. Not hedging, not shopping around — that's the pick.{champ_pct_str}\n\n"
-                f"#{seed} seed. {str_line}contender score **{score_val:.1f}/100**. "
-                f"That's a team built for six rounds of playoff basketball. "
-                f"Runner-up: **{sim_runner_up}**. But I don't think it gets that far.")
+        _save_ctx(team=champion, topic="champion", stance="liked")
+        champ_takes = [
+            f"🏆 **{champion}**. That's the pick and I'm not shopping around.{champ_pct_str}\n\n"
+            f"#{seed} seed. {str_line}**{score_val:.1f}/100** — built for six rounds, not just one big game. "
+            f"Runner-up: **{sim_runner_up}**, but I don't think it gets that far.\n\n"
+            f"*You buying that or you think someone else cuts the nets?*",
+            f"🏆 I'll say it clearly: **{champion}** wins it all.{champ_pct_str}\n\n"
+            f"#{seed} seed, {str_line}score **{score_val:.1f}**. Every pillar checks — defense, clutch, guard play. "
+            f"That's not a hot take, that's what the data says at the end of six rounds.\n\n"
+            f"Runner-up is **{sim_runner_up}**. *Who you got?*",
+        ]
+        return _rng.choice(champ_takes)
 
     # ── Final Four ────────────────────────────────────────────────────────────
     if "final four" in q_low or "final 4" in q_low or "semifinal" in q_low:
@@ -1964,7 +2196,7 @@ def statlasberg_qa(q, bkt_df, s16, e8, ff, champion, champs_df, results_list=Non
         lines = []
         for reg, teams in sorted(by_region.items()):
             seeds_str = ", ".join(
-                f"**{t}** (#{int(bkt_df[bkt_df['team']==t].iloc[0]['seed'])})" if len(bkt_df[bkt_df["team"]==t]) else f"**{t}**"
+                f"**{t}** (#{int(bkt_df[bkt_df['team']==t].iloc[0]['seed'])})" if len(bkt_df[bkt_df["team"]==t]) and pd.notna(bkt_df[bkt_df['team']==t].iloc[0].get('seed')) else f"**{t}**"
                 for t in teams)
             lines.append(f"**{reg}:** {seeds_str}")
         return "🎯 Second weekend — teams I'm sending to the Sweet 16:\n\n" + "\n\n".join(lines)
@@ -1987,9 +2219,9 @@ def statlasberg_qa(q, bkt_df, s16, e8, ff, champion, champs_df, results_list=Non
     if any(w in q_low for w in ["upset", "cinderella", "dark horse", "darkhorse", "sleeper",
                                   "double digit", "double-digit", "surprise me"]):
         s16_upsets = [(row["team"], int(row["seed"])) for _, row in bkt_df.iterrows()
-                      if row.get("seed", 1) >= 10 and row["team"] in (s16 or [])]
+                      if pd.notna(row.get("seed")) and row.get("seed", 1) >= 10 and row["team"] in (s16 or [])]
         e8_upsets  = [(row["team"], int(row["seed"])) for _, row in bkt_df.iterrows()
-                      if row.get("seed", 1) >= 8 and row["team"] in (e8 or [])]
+                      if pd.notna(row.get("seed")) and row.get("seed", 1) >= 8 and row["team"] in (e8 or [])]
 
         lines = []
         for t, s in sorted(e8_upsets, key=lambda x: x[1], reverse=True):
@@ -2004,7 +2236,8 @@ def statlasberg_qa(q, bkt_df, s16, e8, ff, champion, champs_df, results_list=Non
         if not lines:
             threats = bkt_df[bkt_df["seed"] >= 10].sort_values("contender_score", ascending=False).head(4)
             for _, r in threats.iterrows():
-                lines.append(f"• **#{int(r['seed'])} {r['team']}** — score: {safe_f(r.get('contender_score',50)):.1f}. One to watch.")
+                _s = int(r['seed']) if pd.notna(r.get('seed')) else 0
+                lines.append(f"• **#{_s} {r['team']}** — score: {safe_f(r.get('contender_score',50)):.1f}. One to watch.")
         if not lines:
             return "Chalk looks really strong this year. No glaring Cinderella picks."
         return "💥 Upset picks — teams the model actually believes in:\n\n" + "\n".join(lines)
@@ -2043,7 +2276,8 @@ def statlasberg_qa(q, bkt_df, s16, e8, ff, champion, champs_df, results_list=Non
         top = bkt_df.sort_values("contender_score", ascending=False).iloc[0]
         strengths = _team_strengths(top)
         str_line  = (" — " + ", ".join(strengths)) if strengths else ""
-        return (f"📈 **{top['team']}** — #{int(top.get('seed','?'))} seed, "
+        _top_seed = int(top.get('seed')) if pd.notna(top.get('seed')) else '?'
+        return (f"📈 **{top['team']}** — #{_top_seed} seed, "
                 f"contender score **{safe_f(top.get('contender_score',50)):.1f}/100**{str_line}. "
                 f"Best team in the field. Period.")
 
@@ -2091,50 +2325,460 @@ def statlasberg_qa(q, bkt_df, s16, e8, ff, champion, champs_df, results_list=Non
         sim_r   = matched.get("sim_round", "First Round")
         def_s   = safe_f(matched.get("defense_score", 50))
         cl_s    = safe_f(matched.get("clutch_score", 50))
+        t_name  = matched["team"]
         strengths = _team_strengths(matched)
         str_line  = ("\n\n**What makes them dangerous:** " + ", ".join(strengths)) if strengths else ""
         champ_pct_row = ""
-        if len(champs_df) and matched["team"] in champs_df["team"].values:
-            pct = float(champs_df[champs_df["team"] == matched["team"]]["championship_pct"].iloc[0])
+        if len(champs_df) and t_name in champs_df["team"].values:
+            pct = float(champs_df[champs_df["team"] == t_name]["championship_pct"].iloc[0])
             champ_pct_row = f" | **{pct:.1f}%** title odds"
 
+        # Save to context so follow-up messages reference this team
+        _was_my_champ = (t_name == champion)
+        _save_ctx(team=t_name, topic="team_lookup",
+                  stance="liked" if score >= 65 else "faded" if score < 50 else "neutral")
+
         # Check if they've played a result
-        team_results = [r for r in results_list if matched["team"] in r.get("teams", [])]
+        team_results = [r for r in results_list if t_name in r.get("teams", [])]
         result_lines = []
         for r in team_results:
-            if r["winner"] == matched["team"]:
-                opp = [t for t in r.get("teams", []) if t != matched["team"]]
+            if r["winner"] == t_name:
+                opp = [t for t in r.get("teams", []) if t != t_name]
                 result_lines.append(f"✅ Beat **{opp[0] if opp else '?'}** — called it.")
             else:
                 label, explanation = _diagnose_miss(r.get("model_pick",""), r["winner"], bkt_df)
                 result_lines.append(f"📉 Lost to **{r['winner']}** — `{label}`: {explanation}")
         result_block = ("\n\n" + "\n".join(result_lines)) if result_lines else ""
 
-        # Risk assessment voice
-        if risk >= 45:
-            risk_line = f"Upset risk is **{risk:.0f}** — real vulnerability. Don't over-expose."
-        elif risk >= 30:
-            risk_line = f"Upset risk **{risk:.0f}** — beatable in a bad game, but that's true of everyone."
+        # Reactive voice — high/mid/low score + was this my champion pick?
+        if score >= 72:
+            intro_opts = [
+                f"📋 **{t_name}** — this is one of my top picks.{' My champion, actually.' if _was_my_champ else ''}",
+                f"📋 **{t_name}** — yeah, I rate them. Here's why:",
+                f"📋 **{t_name}** — #{seed} seed and I think the committee may have undersold them.",
+            ]
+            risk_line = (f"Upset risk **{risk:.0f}** — they're {'vulnerable in the wrong matchup' if risk >= 38 else 'as safe as anyone in this bracket'}.")
+            _follow_champ_q = "They're my champion pick — hard to argue me off this." if _was_my_champ else "Are you riding with them or do you see a weakness I'm missing?"
+            follow = f"\n\n*{_follow_champ_q}*"
+        elif score >= 58:
+            intro_opts = [
+                f"📋 **{t_name}** — solid team, real threat, not my top pick but I respect them.",
+                f"📋 **{t_name}** — #{seed} seed. Good but not great in my model.",
+                f"📋 **{t_name}** — here's the honest take:",
+            ]
+            risk_line = f"Upset risk **{risk:.0f}** — {'danger zone, one bad game could end their run' if risk >= 40 else 'manageable, but not untouchable'}."
+            follow = f"\n\n*You got them going further than {sim_r} or do you think they're a first-weekend exit?*"
         else:
-            risk_line = f"Upset risk **{risk:.0f}** — one of the safer picks in the field."
+            intro_opts = [
+                f"📋 **{t_name}** — look, I'm not a huge believer here. Real talk:",
+                f"📋 **{t_name}** — they made the bracket but the model isn't impressed.",
+                f"📋 **{t_name}** — #{seed} seed and honestly I think they're overseeded.",
+            ]
+            risk_line = f"Upset risk **{risk:.0f}** — that's a red flag. I'd be cautious betting on them past round 1."
+            follow = f"\n\n*You a believer or are you agreeing with me on this one?*"
 
-        return (f"📋 **{matched['team']}** — #{seed} seed · {arch}\n\n"
-                f"Contender score **{score:.1f}/100** | Defense **{def_s:.1f}** | Clutch **{cl_s:.1f}**{champ_pct_row}\n\n"
-                f"Model sends them to: **{sim_r}**\n\n"
+        intro = _rng.choice(intro_opts)
+        return (f"{intro}\n\n"
+                f"#{seed} seed · {arch} · going to: **{sim_r}**\n\n"
+                f"Score **{score:.1f}/100** | Defense **{def_s:.1f}** | Clutch **{cl_s:.1f}**{champ_pct_row}\n\n"
                 f"{risk_line}"
                 f"{str_line}"
-                f"{result_block}")
+                f"{result_block}"
+                f"{follow}")
 
-    # ── Default ───────────────────────────────────────────────────────────────
-    return ("Run it back — try one of these:\n\n"
-            "- *Who is your champion pick?*\n"
-            "- *What's your Final Four?*\n"
-            "- *Who wins the East?*\n"
-            "- *Best upset picks?*\n"
-            "- *Who should I fade?*\n"
-            "- *Duke vs Kentucky* — head-to-head\n"
-            "- *Tell me about Auburn* — full breakdown\n"
-            "- *Where were you wrong?* — miss autopsy")
+    # ── Sports banter / trash talk / casual chat ──────────────────────────────
+
+    # ── Short filler / continuations ("ok", "and?", "really?", "go on") ─────
+    _filler = ["ok", "okay", "and", "go on", "really", "for real", "word", "facts",
+               "true", "hm", "hmm", "interesting", "lol", "lmao", "haha", "wow",
+               "damn", "sheesh", "fr", "fr fr", "no cap", "yep", "yup", "bet"]
+    if q_low.strip().rstrip("?!.") in _filler or len(q_low.split()) <= 2 and q_low.strip().rstrip("?!.") in _filler:
+        if _last_team:
+            row_ctx = bkt_df[bkt_df["team"] == _last_team]
+            if len(row_ctx):
+                sc = safe_f(row_ctx.iloc[0].get("contender_score", 50))
+                rk = safe_f(row_ctx.iloc[0].get("upset_risk_score", 30))
+                continuations = [
+                    f"Yeah I said it. {_last_team} — **{sc:.1f}** contender score. That's not a fluke. "
+                    f"{'Low upset risk too, {:.0f}. Solid all the way through.'.format(rk) if rk < 33 else 'Upset risk is {:.0f} though — winnable but not automatic.'.format(rk)}",
+                    f"I mean it. I've been watching the data on {_last_team} all season. "
+                    f"The **{sc:.1f}** holds up on both sides of the ball.",
+                    f"Not changing my position. {_last_team} is my pick and I'm living with it."
+                    + _follow_up(_last_team),
+                ]
+                _save_ctx()
+                return _rng.choice(continuations)
+        comeback = [
+            "Give me more to work with. Team? Matchup? Hit me.",
+            "Say less... actually say more. Who are we talking about?",
+            "I'm here, just need a direction. Who you got questions about?",
+        ]
+        _save_ctx()
+        return _rng.choice(comeback)
+
+    # ── Greetings / checking in ────────────────────────────────────────────
+    if any(w in q_low for w in ["what's up", "whats up", "hey statlas", "yo statlas",
+                                 "sup", "how you doing", "what's good", "wsg", "what it do"]):
+        openers = [
+            f"Tournament's here. I've got {champion} going all the way. What do you think? You buying that or you fading?",
+            f"Bracket's locked. My champion pick is **{champion}** and I'm not moving off it. Convince me I'm wrong.",
+            "March Madness season. This is literally the best month in sports. Who you trying to break down first?",
+            f"Ready. Ask me anything. Fair warning — I've got {champion} winning it all and I'll defend that pick all week.",
+            "Let's talk ball. I got the data, you got the eye test — between the two of us we might actually nail this bracket.",
+        ]
+        _save_ctx(topic="greeting")
+        return _rng.choice(openers)
+
+    # ── User trash-talking Statlasberg ─────────────────────────────────────
+    if any(w in q_low for w in ["you suck", "you're trash", "you're terrible", "you're bad",
+                                  "terrible model", "worst model", "bad picks", "you're wrong",
+                                  "your picks suck", "you stink", "garbage picks", "bs picks",
+                                  "stupid model", "dumb model", "ur bad", "ur trash"]):
+        claps = [
+            f"Bold words. My picks are logged, yours aren't. Point at a specific pick and let's actually debate it — "
+            f"who do you think I'm wrong about? {'Last thing we talked about was ' + _last_team + '.' if _last_team else ''}",
+            "Yeah yeah. Every model's trash until it's right, then it was 'obvious.' Classic. "
+            "Tell me which team I have wrong and explain why. I can take the criticism.",
+            f"Okay, {_rng.choice(['fair enough', 'I hear you', 'noted'])}. "
+            f"Which pick specifically? I'd rather argue on specifics than fight in the abstract. "
+            f"{'Is it ' + _last_team + '?' if _last_team else 'Name a team.'}",
+            "You know what? Maybe. I'm not perfect. But I'm better than a dartboard. "
+            "Who do you think I've got wrong? Let's hash it out.",
+        ]
+        _save_ctx(topic="trash_talk")
+        return _rng.choice(claps)
+
+    # ── Trash talking a specific team ─────────────────────────────────────
+    trash_words = ["sucks", "terrible", "overrated", "trash", "fraud", "garbage",
+                   "soft", "can't win", "won't win", "no chance", "bums", "done",
+                   "cooked", "ain't winning", "won't do anything", "mid"]
+    team_trash = None
+    for word in trash_words:
+        if word in q_low:
+            # Try to find a team they're trash-talking
+            words_in_q = q_low.replace(word, "").strip()
+            candidate = find_row(words_in_q)
+            if candidate is not None:
+                team_trash = candidate
+                break
+
+    if team_trash is not None:
+        t_name  = team_trash["team"]
+        t_score = safe_f(team_trash.get("contender_score", 50))
+        t_risk  = safe_f(team_trash.get("upset_risk_score", 25))
+        t_seed  = int(team_trash.get("seed", 5)) if team_trash.get("seed") and not pd.isna(team_trash.get("seed")) else 5
+        _save_ctx(team=t_name, stance="faded")
+        if t_score >= 70:
+            pushbacks = [
+                f"Nah I'm not letting you do that. **{t_name}** — **{t_score:.1f}** contender score. "
+                f"That's not a soft pick, that's the data talking. "
+                f"What specifically are you seeing that you don't like? Their schedule? Backcourt? Give me something.",
+                f"**{t_name}** at {t_score:.1f} — I get it, maybe they haven't *looked* great on TV, "
+                f"but their underlying numbers are legit. "
+                f"Tell me the eye test reason and I'll either agree or push back with numbers.",
+                f"Bold take but I respect the conviction. **{t_name}**'s score is {t_score:.1f} — "
+                f"that's one of the better marks in the bracket. "
+                f"Upset risk is {t_risk:.0f} so they're not bulletproof. What round do you see them losing?",
+            ]
+            return _rng.choice(pushbacks) + _follow_up(t_name)
+        elif t_score >= 55:
+            agree_disagree = [
+                f"Honestly? I'm not riding **{t_name}** hard either. {t_score:.1f} score, "
+                f"upset risk at **{t_risk:.0f}** — there's a real vulnerability there. "
+                f"I wouldn't call them trash but they're definitely beatable in the right matchup. Who would you have beating them?",
+                f"Not gonna lie, the model's lukewarm on **{t_name}** too. {t_score:.1f} is middling for a team at their seed. "
+                f"Upset risk {t_risk:.0f} means they could easily go home early. "
+                f"The question is who has the profile to beat them — any specific matchup you're scared of?",
+            ]
+            return _rng.choice(agree_disagree)
+        else:
+            roast_options = [
+                f"Yeah I'm with you. **{t_name}** at {t_score:.1f} — that's not inspiring. "
+                f"{'Overseeded at #{}.'.format(t_seed) if t_seed <= 6 else 'No real reason to trust them.'} "
+                f"I'd fade them first round without guilt. Who replaces them in your bracket?",
+                f"Hard to defend **{t_name}**. Score {t_score:.1f}, risk {t_risk:.0f}, "
+                f"and they haven't beaten anyone that scares me. "
+                f"If they win a game I'll be shocked. Who do you have going instead?",
+            ]
+            return _rng.choice(roast_options)
+
+    # ── Hyping a team ──────────────────────────────────────────────────────
+    hype_words = ["love", "my guy", "the team", "they're winning", "they gonna win",
+                  "going all the way", "best team", "real deal", "legit", "they different",
+                  "they're different", "can't stop them", "unbeatable", "they're built",
+                  "i got", "i have", "riding with", "rolling with", "taking", "i like",
+                  "i trust", "believe in"]
+    for word in hype_words:
+        if word in q_low:
+            candidate = find_row(q_low.replace(word, "").strip())
+            if candidate is not None:
+                t_name  = candidate["team"]
+                t_score = safe_f(candidate.get("contender_score", 50))
+                t_risk  = safe_f(candidate.get("upset_risk_score", 25))
+                str_tags = _team_strengths(candidate)
+                str_line = (", ".join(str_tags[:2]) + " — ") if str_tags else ""
+                _save_ctx(team=t_name, stance="liked")
+                if t_score >= 70:
+                    _champ_note = "That's my champion pick too." if t_name == champion else "Not my champion but they could get there."
+                    opts = [
+                        f"**{t_name}** — that's a pick I can ride with. {str_line}score **{t_score:.1f}**. "
+                        f"{_champ_note} How deep you going with them?" + _follow_up(t_name),
+                        f"Okay I respect that. **{t_name}** at {t_score:.1f} is legit. {str_line}"
+                        f"Upset risk {t_risk:.0f} so they're not invincible but the floor is high. "
+                        f"What round do you have them exiting?" + _follow_up(t_name),
+                    ]
+                    return _rng.choice(opts)
+                elif t_score >= 55:
+                    opts = [
+                        f"I can see why you like **{t_name}**. {str_line}Score {t_score:.1f} — real pieces there. "
+                        f"But upset risk is **{t_risk:.0f}**, which means they need a clean draw. "
+                        f"What's your path for them — who do they need to avoid?",
+                        f"**{t_name}** is interesting. {t_score:.1f} in my model — not top tier but dangerous. "
+                        f"Tell me what you're seeing specifically that makes you ride with them.",
+                    ]
+                    return _rng.choice(opts)
+                else:
+                    opts = [
+                        f"Ride or die with **{t_name}**, I respect the commitment. "
+                        f"I'm not gonna sugarcoat it — {t_score:.1f} is a rough score and risk is {t_risk:.0f}. "
+                        f"What are you seeing in them that the numbers are missing?",
+                        f"Bold. **{t_name}** at {t_score:.1f} — the model doesn't love them. "
+                        f"But I've seen the eye test beat the algorithm before. Make your case.",
+                    ]
+                    return _rng.choice(opts)
+
+    # ── User shares eye-test opinion (for learning) ────────────────────────
+    if any(w in q_low for w in ["eye test", "i think", "i believe", "i feel like", "in my opinion",
+                                  "imo", "to me", "the way i see it", "watch tape", "tape says",
+                                  "film says", "they look", "they seem", "they play"]):
+        # Find any team mentioned
+        for word in q_low.split():
+            candidate = find_row(word) if len(word) >= 4 else None
+            if candidate is not None:
+                t_name = candidate["team"]
+                break
+        else:
+            candidate = None
+
+        # Store the eye-test note if we can tie it to a team
+        if candidate is not None:
+            t_name  = candidate["team"]
+            t_score = safe_f(candidate.get("contender_score", 50))
+            # Log it as an informal note in session state
+            if "eye_test_notes" not in st.session_state:
+                st.session_state.eye_test_notes = {}
+            st.session_state.eye_test_notes[t_name] = q
+            gap_dir = "higher" if t_score >= 60 else "lower"
+            return (f"👁️ **{t_name}** — eye test logged. I've got a **{t_score:.1f}** on them.\n\n"
+                    f"You're {('on the same page as me' if gap_dir == 'higher' else 'seeing something I might not be measuring')}. "
+                    f"Data can miss effort, scheme fit, and momentum. That's why your eye test matters. "
+                    f"After games are played, ask me *'analyze my reasoning on {t_name}'* and "
+                    f"we'll see if the tape was right.")
+        return ("Eye test is real — data can't capture everything. "
+                "Tell me which team and what you're seeing. "
+                "I'll log it and we'll see if you were right when the dust settles.")
+
+    # ── Jokes / banter about March Madness ────────────────────────────────
+    if any(w in q_low for w in ["joke", "funny", "make me laugh", "something funny",
+                                  "entertain me", "tell me something", "roast"]):
+        jokes = [
+            "A 12 seed walks into a bar. The 5 seed says 'you're not supposed to win.' "
+            "The 12 says 'tell that to the committee.' Same story every March.",
+            "What does a bracketologist's wife say to him in April? "
+            "'How'd your picks do?' **He cries.**",
+            "I told a 16 seed they had no chance. They had me blocked on all platforms by Sunday.",
+            "Nobody loses faster than someone who picked all 1 seeds in a pool. "
+            "Absolute cowards. Zero imagination.",
+            "The best part of March Madness? Every casual fan who picked the cute mascot "
+            "is beating the PhD statistician through the first weekend.",
+        ]
+        return _rng.choice(jokes)
+
+    # ── User asking Statlasberg to roast a team ─────────────────────────────
+    if any(w in q_low for w in ["roast", "drag", "clown", "talk trash", "trash talk",
+                                  "say something bad", "rip on", "clown on"]):
+        # Find team to roast
+        candidate = find_row(q_low.replace("roast", "").replace("drag", "").replace("clown", "")
+                                   .replace("talk trash", "").replace("trash talk", "").strip())
+        if candidate is not None:
+            t_name  = candidate["team"]
+            t_score = safe_f(candidate.get("contender_score", 50))
+            t_seed  = int(candidate.get("seed", 8)) if candidate.get("seed") and not pd.isna(candidate.get("seed")) else 8
+            t_arch  = candidate.get("archetype", "")
+            roasts = [
+                (f"**{t_name}**. Contender score {t_score:.0f}. "
+                 f"Their biggest March Madness achievement this year is making the bracket. "
+                 f"Congratulations on that. "
+                 f"They're gonna play great for 30 minutes and then completely forget "
+                 f"how basketball works in the last two minutes. Watch."),
+                (f"You want me to roast **{t_name}**? Alright — "
+                 f"they're good enough to get everyone's hopes up and not good enough to do anything about it. "
+                 f"That's the cruelest archetype in the tournament. "
+                 f"Score of {t_score:.0f}. Exists to ruin brackets, not win rings."),
+                (f"**{t_name}** has the energy of a team that peaked in practice. "
+                 f"#{t_seed} seed, {t_score:.0f} score. "
+                 f"They're going to look incredible until they don't. "
+                 f"That's it. That's the whole scouting report."),
+            ]
+            return _rng.choice(roasts)
+        teams_to_roast = in_bracket.sort_values("upset_risk_score", ascending=False).head(3)["team"].tolist()
+        return (f"Give me a team name and I'll tear them apart. "
+                f"Off the top of my head, if you want some easy targets: "
+                f"{', '.join(teams_to_roast)} all have ugly upset numbers. "
+                f"Take your pick.")
+
+    # ── Profanity / expressive frustration ────────────────────────────────
+    if any(w in q_low for w in ["wtf", "what the f", "what the hell", "holy sh", "what the sh",
+                                  "no way", "are you kidding", "no shot", "impossible", "insane",
+                                  "unbelievable", "how is this", "this is crazy", "wild"]):
+        team_mentioned = find_row(q_low)
+        if team_mentioned is not None:
+            t_name  = team_mentioned["team"]
+            t_score = safe_f(team_mentioned.get("contender_score", 50))
+            return (f"I KNOW. **{t_name}** — chaos. "
+                    f"Model had them at {t_score:.1f} which is {'respectable' if t_score >= 55 else 'nothing special'}, "
+                    f"but March doesn't care about numbers at 2am on a Thursday. "
+                    f"This is why you watch. This is literally why you watch.")
+        banter_chaos = [
+            "Yeah March Madness is absolutely unhinged and that's exactly why we're all here.",
+            "I can't explain all of it. Nobody can. That's the point. The chaos is the product.",
+            "The tournament has been doing this for 40 years. We should stop being surprised and just enjoy it.",
+        ]
+        return _rng.choice(banter_chaos)
+
+    # ── Agreeing / disagreeing with Statlasberg ────────────────────────────
+    if any(w in q_low for w in ["i agree", "you're right", "you were right", "fair enough",
+                                  "can't argue", "that makes sense", "respect", "good point",
+                                  "you got me", "you're not wrong"]):
+        ctx_team = _last_team or champion
+        responses = [
+            f"Appreciate that. {'On ' + ctx_team + '? ' if ctx_team else ''}I knew you'd come around. "
+            + _follow_up(ctx_team),
+            f"That's all I need to hear. Now what else you want to break down?",
+            f"Good. Now go tell your friends. {ctx_team + ' is real.' if ctx_team else 'Trust the process.'}",
+            f"We're on the same page. Doesn't mean this bracket doesn't go sideways — March gonna March — "
+            f"but at least we're starting from the right place." + _follow_up(),
+        ]
+        _save_ctx()
+        return _rng.choice(responses)
+
+    if any(w in q_low for w in ["i disagree", "i don't think so", "nah", "nope", "not buying it",
+                                  "wrong", "doubt it", "no way", "disagree", "i doubt",
+                                  "i don't believe", "respectfully disagree", "hard disagree",
+                                  "disagree hard", "no i don't", "i don't buy"]):
+        team_mentioned = find_row(q_low)
+        t_target = (team_mentioned["team"] if team_mentioned is not None else _last_team)
+        if t_target:
+            row_d = bkt_df[bkt_df["team"] == t_target]
+            sc_d  = safe_f(row_d.iloc[0].get("contender_score", 50)) if len(row_d) else 50
+            _save_ctx(team=t_target)
+            pushback_opts = [
+                f"Disagree on **{t_target}** — alright, make your case. "
+                f"What's the angle? Schedule? Injuries? A matchup you think breaks them? "
+                f"I've got them at {sc_d:.1f} and I'll defend it but I'm listening.",
+                f"Okay disagreeing on **{t_target}**. Tell me what you see that I'm missing. "
+                f"I'm not married to the number — {sc_d:.1f} could move if you give me a real reason.",
+                f"You'd rather fade **{t_target}**? Alright. How early you got them losing? "
+                f"First round, second round? Tell me the team and I'll run the matchup numbers.",
+            ]
+            return _rng.choice(pushback_opts)
+        _save_ctx()
+        return _rng.choice([
+            "Alright, tell me what pick specifically. I'm not gonna just sit here taking heat "
+            "without knowing what game we're talking about.",
+            f"Disagree with {'what I said about ' + _last_team if _last_team else 'what?'} "
+            "Give me the specific pick and your reasoning.",
+            "Noted. But 'no' isn't an argument. Which team and why?",
+        ])
+
+    # ── Talking about the tournament broadly ──────────────────────────────
+    if any(w in q_low for w in ["love march", "love the tournament", "best time of year",
+                                  "tournament time", "march is", "best sport", "nothing better",
+                                  "greatest tournament", "best bracket"]):
+        return ("March Madness is the best sporting event on the planet. "
+                "Don't @ me. 68 teams, 6 rounds, one champion, and somewhere in there "
+                "an 11 seed is going to end someone's whole bracket and then the commentator "
+                "is gonna say 'Cinderella story!' for the 40th year in a row. "
+                "I love it. Let's break this thing down.")
+
+    # ── Asking about data / methodology ────────────────────────────────────
+    if any(w in q_low for w in ["how do you", "how does the model", "what are you based on",
+                                  "what data", "methodology", "how is your score", "where do you get",
+                                  "your formula", "your algorithm", "how do you calculate",
+                                  "how do you work", "what factors"]):
+        return ("Here's the honest breakdown:\n\n"
+                "My **contender_score** is a weighted composite of:\n"
+                "- **Defense** (25%) — stops you dead or leaks points\n"
+                "- **Guard play** (22%) — senior guards win March, period\n"
+                "- **Clutch** (20%) — one-possession game history\n"
+                "- **Efficiency** (18%) — adjusted offense/defense margins\n"
+                "- **Rebounding** (10%) — extra possessions = extra wins\n"
+                "- **Consistency** (5%) — no random blowout-loss risk\n\n"
+                "Archetypes capture *how* teams play (Four Factors). "
+                "KenPom-proxy cross-checks the pick against adjusted efficiency. "
+                "I'm not an LLM — I don't guess, I calculate. "
+                "But I can still get it wrong. That's March.")
+
+    # ── Asking about specific matchup eye-test ────────────────────────────
+    if any(w in q_low for w in ["what do you think about", "thoughts on", "talk to me about",
+                                  "give me your take", "what's your take", "break down"]):
+        # Try to find team or matchup
+        vs_match2 = _re.search(r'(.+?)\s+(?:vs\.?|versus|against|or)\s+(.+)', q_low)
+        if vs_match2:
+            t1_q = vs_match2.group(1).strip().rstrip("?")
+            t2_q = vs_match2.group(2).strip().rstrip("?")
+            r1, r2 = find_row(t1_q), find_row(t2_q)
+            if r1 is not None and r2 is not None:
+                # Reuse the vs matchup logic
+                sc1, sc2 = safe_f(r1.get("contender_score",50)), safe_f(r2.get("contender_score",50))
+                p1 = win_prob_sigmoid(sc1, sc2)
+                fav = r1["team"] if p1 >= 0.5 else r2["team"]
+                fav_p = max(p1, 1-p1)
+                arc = get_matchup_arc(dict(r1), dict(r2)) if _ARCHETYPES_OK else ""
+                return (f"📊 **{r1['team']}** ({sc1:.1f}) vs **{r2['team']}** ({sc2:.1f})\n\n"
+                        f"**{fav}** wins — {fav_p*100:.0f}% probability.\n\n"
+                        + (f"*Matchup read:* {arc}" if arc else ""))
+        candidate = find_row(q_low.replace("what do you think about","").replace("thoughts on","")
+                                   .replace("talk to me about","").replace("give me your take","")
+                                   .replace("what's your take on","").replace("break down","").strip())
+        if candidate is not None:
+            # Fall through to the team lookup handler above — re-trigger it
+            t_name  = candidate["team"]
+            t_score = safe_f(candidate.get("contender_score",50))
+            t_risk  = safe_f(candidate.get("upset_risk_score",25))
+            t_arch  = candidate.get("archetype","—")
+            t_seed_v = int(candidate["seed"]) if candidate.get("seed") and not pd.isna(candidate.get("seed")) else "—"
+            str_tags = _team_strengths(candidate)
+            str_line = ("\n\n**What makes them dangerous:** " + ", ".join(str_tags)) if str_tags else ""
+            return (f"📋 **{t_name}** — #{t_seed_v} seed · {t_arch}\n\n"
+                    f"Contender score **{t_score:.1f}/100** | Upset risk **{t_risk:.0f}**\n\n"
+                    + str_line)
+
+    # ── Default — context-aware, never just a static menu ────────────────────
+    _save_ctx()
+    if _last_team:
+        # Reference the last thing we discussed to stay in the conversation
+        row_ctx = bkt_df[bkt_df["team"] == _last_team]
+        sc_ctx  = safe_f(row_ctx.iloc[0].get("contender_score", 50)) if len(row_ctx) else 50
+        defaults = [
+            f"I'm not sure I followed that — were you still talking about **{_last_team}**? "
+            f"If so, ask me about their matchup, their path, or why you think I'm wrong on them.",
+            f"Lost me there. You still on **{_last_team}** or did we move to a new team?",
+            f"Say that differently? We were just talking about {_last_team} ({sc_ctx:.0f}) — "
+            f"if that's still the subject, try: *'Who beats them?'* or *'How far are they going?'*",
+        ]
+        return _rng.choice(defaults)
+    # First interaction — give a punchy prompt, not a wall of commands
+    first_time = [
+        f"I'm locked in. Start with a team, a matchup, or just ask who I've got winning it all. "
+        f"Hint: it's **{champion}**. Fight me.",
+        f"Talk ball to me. Who's your pick to win it all? I'll tell you mine and we'll debate.",
+        f"Ask me anything — who I'm fading, who's going deep, my Final Four, a specific matchup. "
+        f"Or just say a team name and I'll break them down.",
+        f"Tell me a team and I'll give you the full breakdown. Or ask *'who should I fade?'* "
+        f"and I'll start the conversation.",
+    ]
+    return _rng.choice(first_time)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2142,7 +2786,8 @@ def statlasberg_qa(q, bkt_df, s16, e8, ff, champion, champs_df, results_list=Non
 # ─────────────────────────────────────────────────────────────────────────────
 with tab8:
     st.markdown('<div class="section-header">🤖 Ask Statlasberg</div>', unsafe_allow_html=True)
-    st.caption("Statlasberg is a basketball junkie. He's direct, confident when right, and honest when wrong — ask him anything.")
+    st.caption("Statlasberg is a basketball junkie. Direct, confident, and trash-talk capable. "
+               "Ask about picks, matchups, eye test — or just talk some ball. He bites back. 🏀")
 
     # ── Model Comparison ──────────────────────────────────────────────────────
     with st.expander("📊 Model Comparison — Statlasberg vs KenPom-Proxy vs Seed Baseline", expanded=True):
@@ -2189,14 +2834,14 @@ with tab8:
                 st.markdown("**🤖 Statlasberg**")
                 for t in (sim_ff or []):
                     row = comp_df[comp_df["team"] == t]
-                    seed_str = f" (#{int(row.iloc[0]['seed'])})" if len(row) else ""
+                    seed_str = f" (#{int(row.iloc[0]['seed'])})" if len(row) and pd.notna(row.iloc[0].get('seed')) else ""
                     st.markdown(f"• {t}{seed_str}")
                 st.markdown(f"**Champion:** {sim_champion}")
             with ff_col2:
                 st.markdown(f"**📊 {kp_label.split(chr(10))[0]}**")
                 for t in kp_ff:
                     row = comp_df[comp_df["team"] == t]
-                    seed_str = f" (#{int(row.iloc[0]['seed'])})" if len(row) else ""
+                    seed_str = f" (#{int(row.iloc[0]['seed'])})" if len(row) and pd.notna(row.iloc[0].get('seed')) else ""
                     st.markdown(f"• {t}{seed_str}")
                 st.markdown(f"**Champion:** {kp_ff[0] if kp_ff else '—'}")
             with ff_col3:
@@ -2243,7 +2888,7 @@ with tab8:
                     st.markdown(
                         f'<div style="background:#1e293b;border-radius:6px;padding:8px 12px;margin:4px 0;font-size:0.85rem">'
                         f'{gap_dir} <strong style="color:#f1f5f9">{row["team"]}</strong> '
-                        f'<span style="color:#94a3b8">(#{int(row["seed"])} seed)</span> — '
+                        f'<span style="color:#94a3b8">(#{int(row["seed"]) if pd.notna(row.get("seed")) else "?"} seed)</span> — '
                         f'Statl. rank <strong style="color:#4ade80">#{int(row["statl_rank"])}</strong> · '
                         f'KP-Proxy rank <strong style="color:#f87171">#{int(row["kp_rank"])}</strong>'
                         f'</div>',
@@ -2254,21 +2899,55 @@ with tab8:
     st.markdown("---")
 
     # ── Chat Q&A ──────────────────────────────────────────────────────────────
-    st.markdown("### 💬 Ask Me Anything About the 2026 Tournament")
+    st.markdown("### 💬 Talk Ball with Statlasberg")
+    st.caption("He remembers what you said last. Reference 'them' or 'that team' and he knows who you mean. "
+               "Agree, disagree, trash talk, hype your squad — he bites back. 🏀")
 
-    # Suggestion chips
-    suggestions = [
-        "Who is your champion pick?",
-        "Best upset picks?",
-        "Who should I fade?",
-        "Where were you wrong?",
-        "Where did I beat you?",
-        "How are my picks doing?",
-    ]
-    chip_cols = st.columns(len(suggestions))
-    for i, sug in enumerate(suggestions):
+    # Contextual suggestion chips — not a static menu, they rotate based on conversation
+    _ctx_chips = st.session_state.get("chat_context", {})
+    _chip_team = _ctx_chips.get("last_team")
+    if _chip_team:
+        analysis_chips = [
+            f"Who beats {_chip_team}?",
+            f"How far is {_chip_team} going?",
+            "Who's my champion?",
+            "Best upset picks?",
+        ]
+        banter_chips = [
+            f"I disagree on {_chip_team}",
+            f"Roast {_chip_team}",
+            "Who should I fade?",
+            "Make me laugh",
+        ]
+    else:
+        analysis_chips = [
+            "Who is your champion pick?",
+            "What's your Final Four?",
+            "Best upset picks?",
+            "Who should I fade?",
+        ]
+        banter_chips = [
+            f"Tell me about {sim_champion}" if sim_champion else "Who's the most dangerous team?",
+            "Roast a team",
+            "Make me laugh",
+            "How do you work?",
+        ]
+
+    st.markdown("<span style='color:#64748b;font-size:0.75rem'>QUICK ASKS</span>", unsafe_allow_html=True)
+    chip_cols = st.columns(4)
+    for i, sug in enumerate(analysis_chips[:4]):
         with chip_cols[i]:
-            if st.button(sug, key=f"chip_{i}", use_container_width=True):
+            if st.button(sug, key=f"chip_a_{i}", use_container_width=True):
+                st.session_state.chat_history.append({"role": "user", "content": sug})
+                resp = statlasberg_qa(sug, in_bracket, sim_s16, sim_e8, sim_ff,
+                                      sim_champion, champs,
+                                      results_list=st.session_state.results)
+                st.session_state.chat_history.append({"role": "assistant", "content": resp})
+                st.rerun()
+    banter_cols = st.columns(4)
+    for i, sug in enumerate(banter_chips[:4]):
+        with banter_cols[i]:
+            if st.button(sug, key=f"chip_b_{i}", use_container_width=True):
                 st.session_state.chat_history.append({"role": "user", "content": sug})
                 resp = statlasberg_qa(sug, in_bracket, sim_s16, sim_e8, sim_ff,
                                       sim_champion, champs,
@@ -2283,20 +2962,222 @@ with tab8:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
 
-    # Chat input
-    if user_q := st.chat_input("Ask about picks, matchups, or try: 'Where did I beat you?' / 'Analyze my reasoning on Auburn'"):
+    # Chat input — short, inviting placeholder
+    _placeholder = (
+        f"Reply to Statlasberg, or ask about any team, matchup, or pick..."
+        if st.session_state.chat_history else
+        f"Start here: 'Who wins it all?' · 'Tell me about {sim_champion}' · 'Roast Duke'"
+    )
+    if user_q := st.chat_input(_placeholder):
         st.session_state.chat_history.append({"role": "user", "content": user_q})
-        with st.spinner("Thinking…"):
-            response = statlasberg_qa(user_q, in_bracket, sim_s16, sim_e8, sim_ff,
-                                      sim_champion, champs,
-                                      results_list=st.session_state.results)
+        response = statlasberg_qa(user_q, in_bracket, sim_s16, sim_e8, sim_ff,
+                                  sim_champion, champs,
+                                  results_list=st.session_state.results)
         st.session_state.chat_history.append({"role": "assistant", "content": response})
         st.rerun()
 
     if st.session_state.chat_history:
-        if st.button("🗑 Clear chat", key="clear_chat"):
-            st.session_state.chat_history = []
-            st.rerun()
+        _clr_col, _rst_col = st.columns([1, 4])
+        with _clr_col:
+            if st.button("🗑 Clear chat", key="clear_chat"):
+                st.session_state.chat_history = []
+                st.session_state["chat_context"] = {}
+                st.rerun()
 
     st.markdown("---")
-    st.caption("Statlasberg speaks from the model — not an LLM. Confident when right, autopsy when wrong. Log results in the 🏆 Bracket tab to unlock miss analysis.")
+    # Show logged eye-test notes if any
+    if st.session_state.eye_test_notes:
+        with st.expander(f"👁️ Your Eye-Test Notes ({len(st.session_state.eye_test_notes)} teams logged)", expanded=False):
+            for team_n, note_n in st.session_state.eye_test_notes.items():
+                st.markdown(f"**{team_n}:** *{note_n}*")
+            if st.button("Clear eye-test notes", key="clear_eye_test"):
+                st.session_state.eye_test_notes = {}
+                st.rerun()
+
+    st.caption("Statlasberg speaks from the model — not an LLM. Confident when right, autopsy when wrong. "
+               "Trash talk him, share your eye test, roast teams — he bites back. "
+               "Log results in the 🏆 Bracket tab to unlock miss analysis.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 9 — MODEL ACCURACY  (Historical Backtest 2015–2025)
+# ─────────────────────────────────────────────────────────────────────────────
+with tab9:
+    st.markdown('<div class="section-header">📈 Model Accuracy — Historical Backtest (2015–2025)</div>',
+                unsafe_allow_html=True)
+    st.caption("How well does Statlasberg's scoring model rank actual NCAA champions? "
+               "Each season uses real Sports-Reference stats. No future information is used.")
+
+    if not os.path.exists(BACKTEST_PATH):
+        st.warning("⚠️ No backtest results found. Run `python run_backtest.py --data-dir data/raw/teams` first.")
+    else:
+        bt = pd.read_csv(BACKTEST_PATH)
+        valid_bt = bt[bt["champion_rank"].notna() & (bt["champion_rank"] > 0)].copy()
+
+        if len(valid_bt) > 0:
+            # ── Summary KPIs ─────────────────────────────────────────────────
+            avg_rank    = valid_bt["champion_rank"].mean()
+            top3_pct    = (valid_bt["champion_rank"] <= 3).mean() * 100
+            top5_pct    = (valid_bt["champion_rank"] <= 5).mean() * 100
+            top10_pct   = (valid_bt["champion_rank"] <= 10).mean() * 100
+            n_seasons   = len(valid_bt)
+
+            st.markdown("### Overall Performance")
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Avg Champion Rank",  f"#{avg_rank:.1f}",
+                      delta=None, help="Lower is better. Statlasberg's average ranking of the eventual champion.")
+            k2.metric("Top-5 Rate",  f"{top5_pct:.0f}%",
+                      help="% of seasons where the actual champion was ranked top-5 by the model.")
+            k3.metric("Top-10 Rate", f"{top10_pct:.0f}%",
+                      help="% of seasons the champion was in the model's top 10.")
+            k4.metric("Seasons Backtested", f"{n_seasons}",
+                      help="All seasons using real Sports-Reference data (2015–2025, skip 2020).")
+
+            # Grade banner
+            if avg_rank <= 5:
+                grade_msg = "🏆 **Elite accuracy** — the model consistently identifies championship-caliber teams."
+                grade_color = "#1a7f1a"
+            elif avg_rank <= 10:
+                grade_msg = "✅ **Strong accuracy** — champion is almost always in the model's top 10."
+                grade_color = "#2468a0"
+            else:
+                grade_msg = "⚠️ **Room to improve** — model sometimes misses the eventual champion."
+                grade_color = "#b85c00"
+            st.markdown(
+                f'<div style="background:{grade_color}22;border-left:4px solid {grade_color};'
+                f'padding:10px 16px;border-radius:6px;margin:12px 0;">{grade_msg}</div>',
+                unsafe_allow_html=True
+            )
+
+            # ── Rank Distribution Bar Chart ───────────────────────────────────
+            st.markdown("### Champion Rank Each Season")
+
+            import altair as alt
+            chart_df = valid_bt[["season", "champion_rank", "actual_champion",
+                                  "model_top_pick", "champion_contender_score"]].copy()
+            chart_df["season"] = chart_df["season"].astype(str)
+            chart_df["hit_label"] = chart_df["champion_rank"].apply(
+                lambda r: "🟢 Top 5" if r <= 5 else ("🟡 Top 10" if r <= 10 else "🔴 Outside Top 10")
+            )
+            chart_df["bar_color"] = chart_df["champion_rank"].apply(
+                lambda r: "#2ecc71" if r <= 5 else ("#f39c12" if r <= 10 else "#e74c3c")
+            )
+
+            bar_chart = (
+                alt.Chart(chart_df)
+                .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+                .encode(
+                    x=alt.X("season:N", title="Season", axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y("champion_rank:Q", title="Champion Rank (lower = better)",
+                            scale=alt.Scale(domain=[0, max(25, int(chart_df["champion_rank"].max()) + 2)])),
+                    color=alt.Color("hit_label:N",
+                                    scale=alt.Scale(
+                                        domain=["🟢 Top 5", "🟡 Top 10", "🔴 Outside Top 10"],
+                                        range=["#2ecc71", "#f39c12", "#e74c3c"]
+                                    ),
+                                    legend=alt.Legend(title="Model Accuracy")),
+                    tooltip=[
+                        alt.Tooltip("season:N",                  title="Season"),
+                        alt.Tooltip("actual_champion:N",         title="Champion"),
+                        alt.Tooltip("champion_rank:Q",           title="Model Rank"),
+                        alt.Tooltip("champion_contender_score:Q", title="Score", format=".1f"),
+                        alt.Tooltip("model_top_pick:N",          title="Model's #1 Pick"),
+                    ]
+                )
+                .properties(height=320, title="Champion Rank by Season")
+            )
+
+            # Add a reference line at y=5
+            rule = alt.Chart(pd.DataFrame({"y": [5]})).mark_rule(
+                color="#2ecc71", strokeDash=[6, 4], size=1.5
+            ).encode(y="y:Q")
+
+            st.altair_chart(bar_chart + rule, use_container_width=True)
+
+            # ── Year-by-Year Table ────────────────────────────────────────────
+            st.markdown("### Year-by-Year Results")
+
+            display_bt = valid_bt[["season", "actual_champion", "champion_rank",
+                                    "champion_contender_score", "model_top_pick",
+                                    "top5_picks"]].copy()
+            display_bt = display_bt.rename(columns={
+                "season":                   "Year",
+                "actual_champion":          "Champion",
+                "champion_rank":            "Model Rank",
+                "champion_contender_score": "Champion Score",
+                "model_top_pick":           "Model's #1 Pick",
+                "top5_picks":               "Model Top-5 Picks",
+            })
+            display_bt["Champion Score"] = display_bt["Champion Score"].round(1)
+
+            def _rank_style(rank):
+                if rank <= 3:  return "color:#2ecc71; font-weight:700"
+                if rank <= 5:  return "color:#27ae60; font-weight:600"
+                if rank <= 10: return "color:#f39c12; font-weight:600"
+                return "color:#e74c3c; font-weight:600"
+
+            # Render as styled HTML table
+            rows_html = ""
+            for _, row in display_bt.iterrows():
+                rank = int(row["Model Rank"])
+                style = _rank_style(rank)
+                icon = "🟢" if rank <= 5 else ("🟡" if rank <= 10 else "🔴")
+                top_pick = row["Model's #1 Pick"]
+                champion = row["Champion"]
+                hit = "✅ " if champion == top_pick else ""
+                top5 = row["Model Top-5 Picks"]
+                score = row["Champion Score"]
+                year = int(row["Year"])
+                rows_html += (
+                    f"<tr>"
+                    f"<td><b>{year}</b></td>"
+                    f"<td>{champion}</td>"
+                    f"<td style='{style}'>{icon} #{rank}</td>"
+                    f"<td>{score:.1f}</td>"
+                    f"<td>{hit}{top_pick}</td>"
+                    f"<td style='font-size:0.82em;color:#aaa'>{top5}</td>"
+                    f"</tr>"
+                )
+
+            st.markdown(
+                f"""<table style='width:100%;border-collapse:collapse;font-size:0.9em;'>
+                <thead><tr style='background:#1e2a3a;'>
+                  <th style='padding:8px 10px;text-align:left'>Year</th>
+                  <th style='padding:8px 10px;text-align:left'>Champion</th>
+                  <th style='padding:8px 10px;text-align:left'>Model Rank</th>
+                  <th style='padding:8px 10px;text-align:left'>Score</th>
+                  <th style='padding:8px 10px;text-align:left'>Model's #1 Pick</th>
+                  <th style='padding:8px 10px;text-align:left'>Top-5 Picks</th>
+                </tr></thead>
+                <tbody>{rows_html}</tbody>
+                </table>""",
+                unsafe_allow_html=True
+            )
+
+            # ── Methodology Note ──────────────────────────────────────────────
+            st.markdown("---")
+            with st.expander("ℹ️ How the backtest works", expanded=False):
+                st.markdown("""
+**Data**: Real team stats scraped from Sports-Reference.com for each season
+(2015–2019, 2021–2025 — 2020 skipped, no tournament).
+
+**Method**:
+1. For each season, load that year's full D-I stats (offense, defense, SRS, etc.)
+2. Run the same scoring pipeline used for 2026 predictions — no look-ahead data
+3. Rank all D-I teams by `contender_score`
+4. Record where the actual NCAA champion placed in that ranking
+
+**What "Champion Rank" means**:
+- Rank 1 = the model correctly identified the champion as its top pick
+- Rank 5 = champion was in the top 5 but not #1 pick
+- Rank 22 = worst case (2017 North Carolina — UNC's SRS was penalized by a tough ACC schedule)
+
+**Limitations**:
+- The model uses season-long stats, not tournament-specific adjustments
+- Bracket matchups (who each team would face) are not factored into the backtest rank
+- Injury overrides are NOT applied to historical seasons (they're 2026-specific)
+- 2020 excluded — COVID cancelled the tournament
+                """)
+
+        else:
+            st.info("No valid backtest data available. Run the backtest first.")

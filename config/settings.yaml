@@ -19,7 +19,7 @@ data_sources:
 
 model:
   type: weighted_baseline
-  simulations: 500000
+  simulations: 10000  # Use 500000 for production; 10000 for fast dev runs
   backtest_seasons: [2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2021, 2022, 2023, 2024, 2025]
 
 scoring:

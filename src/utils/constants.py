@@ -81,8 +81,9 @@ TEAM_ALIASES = {
     "UNC": "North Carolina", "Ole Miss": "Mississippi",
     "SMU": "Southern Methodist", "LSU": "Louisiana State",
     "USC": "Southern California", "UCF": "Central Florida",
-    "UNLV": "UNLV", "VCU": "VCU", "BYU": "Brigham Young",
-    "TCU": "Texas Christian", "Pitt": "Pittsburgh",
+    "UNLV": "UNLV", "VCU": "VCU",
+    # Note: team data uses "BYU" as canonical — "Brigham Young" normalized in bracket loader
+    "TCU": "TCU", "Pitt": "Pittsburgh",
     "Saint Mary's": "Saint Marys CA", "St. Mary's": "Saint Marys CA",
     "Miami (FL)": "Miami FL", "Miami": "Miami FL",
     "St. John's": "St Johns NY", "Saint John's": "St Johns NY",

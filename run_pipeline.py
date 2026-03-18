@@ -131,7 +131,7 @@ def main():
     print("=" * 70)
 
     display_cols = ["team", "contender_score", "upset_risk_score", "archetype",
-                    "expected_round", "defense_score", "experience_score",
+                    "expected_round", "defense_score", "backcourt_experience_score",
                     "guard_play_score", "clutch_score"]
     available = [c for c in display_cols if c in scores_df.columns]
     top = scores_df.sort_values("contender_score", ascending=False).head(args.top)

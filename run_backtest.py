@@ -47,18 +47,23 @@ def run_single_season(season, data_dir=None):
     """Score one season. Returns scored DataFrame."""
     csv_path = os.path.join(data_dir, f"team_stats_{season}.csv") if data_dir else None
 
-    if csv_path and os.path.exists(csv_path):
+    using_real_data = csv_path and os.path.exists(csv_path)
+    if using_real_data:
         df = pd.read_csv(csv_path)
         if "season" not in df.columns:
             df["season"] = season
     else:
-        # Generate sample data (placeholder — replace with real historical data)
+        # Generate sample data (placeholder — install real historical data via
+        # scripts/fetch_sports_ref.py for meaningful backtest accuracy)
         df = generate_sample_data(season=season, n_teams=68)
 
     df = build_features(df)
     df = compute_all_subscores(df)
-    df = score_all_teams(df)
+    # Historical backtests: skip season-specific injury overrides (e.g. 2026
+    # injuries should not penalise 2019 Duke in the historical ranking)
+    df = score_all_teams(df, apply_availability=False)
     df = classify_all_teams(df)
+    df["_using_real_data"] = using_real_data
     return df
 
 
@@ -66,9 +71,19 @@ def evaluate_season(scores_df, season):
     """Evaluate model for one season against known outcomes."""
     metrics = {"season": season}
 
+    ranked = scores_df.sort_values("contender_score", ascending=False).reset_index(drop=True)
+
+    # Model's top pick (rank 1)
+    if len(ranked) > 0:
+        metrics["model_top_pick"] = ranked.iloc[0]["team"]
+        metrics["model_top_score"] = float(ranked.iloc[0]["contender_score"])
+    else:
+        metrics["model_top_pick"] = None
+        metrics["model_top_score"] = None
+
     champion = CHAMPIONS.get(season)
+    metrics["actual_champion"] = champion
     if champion:
-        ranked = scores_df.sort_values("contender_score", ascending=False).reset_index(drop=True)
         match = ranked[ranked["team"] == champion]
         if len(match) > 0:
             metrics["champion_rank"] = int(match.index[0]) + 1
@@ -80,10 +95,9 @@ def evaluate_season(scores_df, season):
         metrics["champion_rank"] = None
         metrics["champion_contender_score"] = None
 
-    # Archetype distribution
-    metrics["n_balanced_powerhouse"] = int((scores_df["archetype"] == "Balanced Powerhouse").sum())
-    metrics["n_fraud_favorite"] = int((scores_df["archetype"] == "Fraud Favorite").sum())
-    metrics["n_dangerous_low_seed"] = int((scores_df["archetype"] == "Dangerous Low Seed").sum())
+    # Top-5 picks for that season
+    top5 = ranked.head(5)["team"].tolist()
+    metrics["top5_picks"] = ", ".join(top5)
 
     # Score statistics
     metrics["mean_contender"] = round(scores_df["contender_score"].mean(), 1)
@@ -106,6 +120,8 @@ def main():
         log.info(f"Running backtest for {season}")
         scores = run_single_season(season, args.data_dir)
         metrics = evaluate_season(scores, season)
+        # Carry over data-source flag so the summary can report it
+        metrics["_using_real_data"] = bool(scores["_using_real_data"].iloc[0]) if "_using_real_data" in scores.columns else False
         all_metrics.append(metrics)
 
         rank = metrics.get("champion_rank")
@@ -115,7 +131,13 @@ def main():
             print(f"  {season}: Champion not found in data")
 
     results = pd.DataFrame(all_metrics)
-    write_csv(results, "data/outputs/backtest_results.csv")
+    # Drop internal helper column before saving
+    save_cols = [c for c in results.columns if not c.startswith("_")]
+    write_csv(results[save_cols], "data/outputs/backtest_results.csv")
+
+    # Determine how many seasons used real vs. sample data
+    real_seasons  = [m for m in all_metrics if m.get("_using_real_data")]
+    sample_seasons = [m for m in all_metrics if not m.get("_using_real_data")]
 
     # Summary
     valid = results[results["champion_rank"].notna() & (results["champion_rank"] > 0)]
@@ -128,8 +150,11 @@ def main():
         print(f"  Champions in top 5:  {(valid['champion_rank'] <= 5).sum()}/{len(valid)}")
         print(f"  Champions in top 10: {(valid['champion_rank'] <= 10).sum()}/{len(valid)}")
         print(f"  Worst rank:          {int(valid['champion_rank'].max())}")
-        print(f"\n  NOTE: Using sample data. Plug in real historical CSVs for")
-        print(f"  accurate backtest results via --data-dir.")
+        if real_seasons:
+            print(f"\n  ✅ Real Sports-Reference data: {len(real_seasons)} seasons")
+        if sample_seasons:
+            print(f"\n  ⚠️  Sample data used: {len(sample_seasons)} seasons")
+            print(f"     Run scripts/fetch_sports_ref.py for those years.")
 
 
 if __name__ == "__main__":

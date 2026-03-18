@@ -169,8 +169,17 @@ def _map_columns(raw: pd.DataFrame, year: int) -> pd.DataFrame:
 
     games = _safe_float(raw[g_col]) if g_col else np.nan
     df["wins"] = _safe_float(raw[w_col]) if w_col else np.nan
-    df["losses"] = _safe_float(raw[l_col]) if l_col else np.nan
     df["win_pct"] = _safe_float(raw[wl_col]) if wl_col else np.nan
+
+    # Derive losses from wins + win_pct (more reliable than parsing the "L" column,
+    # which Sports-Reference renders as cumulative season totals that pandas sometimes
+    # misreads when multi-level headers are flattened).
+    valid_mask = df["wins"].notna() & df["win_pct"].notna() & (df["win_pct"] > 0)
+    df["losses"] = np.nan
+    df.loc[valid_mask, "losses"] = (
+        (df.loc[valid_mask, "wins"] / df.loc[valid_mask, "win_pct"]).round().astype(int)
+        - df.loc[valid_mask, "wins"].astype(int)
+    )
     df["adj_margin"] = _safe_float(raw[srs_col]) if srs_col else np.nan
     df["strength_of_schedule"] = _safe_float(raw[sos_col]) if sos_col else np.nan
 

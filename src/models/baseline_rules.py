@@ -9,9 +9,9 @@ CONTENDER_WEIGHTS = {
     "defense_score":      0.20,   # elite defense travels
     "clutch_score":       0.18,   # clutch: close games + Q1 wins + FT + last-10
     "guard_play_score":   0.13,   # backcourt execution
-    "rebounding_score":   0.11,   # glass dominance
+    "rebounding_score":   0.12,   # glass dominance
     "consistency_score":  0.06,   # margin variance + blowout rate
-    "region_bias_score":  0.04,   # geographic advantage (low weight)
+    "region_bias_score":  0.03,   # geographic advantage (low weight)
 }
 
 # ── Penalties applied AFTER base contender_score is computed ─────────────────
@@ -124,7 +124,16 @@ def predicted_seed_line(committee_alignment: float) -> int:
     else:                           return 16
 
 
-def score_all_teams(features_df):
+def score_all_teams(features_df, apply_availability: bool = True):
+    """Score all teams with the baseline model.
+
+    Args:
+        features_df: DataFrame with derived features.
+        apply_availability: If True (default), apply season-specific injury/
+            availability overrides from config/availability_2026.py.
+            Set to False when backtesting historical seasons so that 2026
+            injury adjustments don't distort prior-year evaluations.
+    """
     log.info(f"Scoring {len(features_df)} teams with baseline model")
     df = features_df.copy()
 
@@ -162,7 +171,8 @@ def score_all_teams(features_df):
                      f"{n_penalized} teams")
 
     # 2. Availability overrides (manual config for known absences/injuries)
-    if AVAILABILITY_OVERRIDES:
+    #    Skipped when apply_availability=False (e.g. historical backtests)
+    if apply_availability and AVAILABILITY_OVERRIDES:
         for team, adj in AVAILABILITY_OVERRIDES.items():
             idx = df[df["team"] == team].index
             if len(idx) > 0:
@@ -178,7 +188,8 @@ def score_all_teams(features_df):
     df["upset_risk_score"] = df.apply(compute_upset_risk_score, axis=1)
 
     # 4. Upset risk overrides (manual config for known injury/availability risk)
-    if UPSET_RISK_OVERRIDES:
+    #    Skipped when apply_availability=False (e.g. historical backtests)
+    if apply_availability and UPSET_RISK_OVERRIDES:
         for team, adj in UPSET_RISK_OVERRIDES.items():
             idx = df[df["team"] == team].index
             if len(idx) > 0:

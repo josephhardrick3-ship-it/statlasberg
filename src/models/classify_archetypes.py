@@ -104,10 +104,10 @@ def classify_archetype(row) -> str:
     adj_net = (adj_off - adj_def) if has_eff_data else 0.0  # > 0 = net positive
 
     # Free throw identity
-    ft_rate = _v(row, "ft_rate", 0.0)   # FTA/FGA; > 0.40 = foul-dependent
+    ft_rate = _v(row, "ft_rate", 0.0)   # FTA/FGA stored as %; > 40.0 = foul-dependent
 
     # Turnover proneness
-    to_pct = _v(row, "turnover_pct", 0.0)   # TOs per possession; > 0.19 = sloppy
+    to_pct = _v(row, "turnover_pct", 0.0)   # turnover rate stored as %; > 19.5 = sloppy
 
     # Pace / style signals
     has_tempo    = tempo > 55
@@ -178,7 +178,7 @@ def classify_vulnerabilities(row) -> list:
 
     # ── Foul-dependent (lives at the stripe) ──────────────────────────────
     ft_rate = v("ft_rate", 0.0)
-    if ft_rate > 0.40:
+    if ft_rate > 40.0:   # stored as %, e.g. 42.0 = 42 FTAs per 100 FGAs
         tags.append("🚨 Foul-dependent — star gets in foul trouble, season over")
 
     # ── Porous perimeter defense ──────────────────────────────────────────
@@ -203,7 +203,7 @@ def classify_vulnerabilities(row) -> list:
 
     # ── Turnover-prone ─────────────────────────────────────────────────────
     to_pct = v("turnover_pct", 0.0)
-    if to_pct > 0.195:
+    if to_pct > 19.5:   # stored as %, e.g. 20.0 = 20% turnover rate
         tags.append("💸 Turnover-prone — a press or scramble defense will hurt them")
 
     # ── Star-dependent / one-man show ─────────────────────────────────────
@@ -268,7 +268,7 @@ def classify_strengths(row) -> list:
 
     # ── Offensive rebound and second-chance machine ────────────────────────
     orb_pct = v("off_rebound_pct", 0.0)
-    if v("rebounding_score") >= 72 or orb_pct > 0.33:
+    if v("rebounding_score") >= 72 or orb_pct > 33.0:   # stored as %, e.g. 34.0 = 34% OREB rate
         tags.append("🪤 Trap the glass — extra possessions every single game")
 
     # ── Guard creation / bucket on demand ─────────────────────────────────
