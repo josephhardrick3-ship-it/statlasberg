@@ -686,10 +686,10 @@ if st.session_state.dive_team:
         st.rerun()
 
 # ── Main tabs ─────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "🏅 Rankings", "🎯 Sweet 16 Picks", "🔍 Team Deep Dive",
     "📊 Model vs Committee", "🎲 Championship Odds", "🏆 Bracket", "📺 Live",
-    "📊 Model Comparison", "📈 Model Accuracy"
+    "📊 Model Comparison", "📈 Model Accuracy", "📋 Recap"
 ])
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2240,6 +2240,126 @@ def model_pregame_prob(team1_name, team2_name, bkt_df):
     return win_prob_sigmoid(s1, s2), s1, s2
 
 
+@st.cache_data(ttl=300)
+def fetch_tournament_results(bracket_teams):
+    """Fetch all completed 2026 tournament games from ESPN.
+    bracket_teams: frozenset of canonical team names for validation.
+    Returns list of dicts: {t1, t2, winner, loser, t1_score, t2_score, headline}
+    """
+    if not _REQUESTS_OK:
+        return []
+    results = []
+    try:
+        resp = _requests.get(ESPN_SCOREBOARD, timeout=6,
+                             headers={"User-Agent": "statlasberg/1.0"})
+        resp.raise_for_status()
+        data = resp.json()
+        for event in data.get("events", []):
+            comp = event.get("competitions", [{}])[0]
+            comps = comp.get("competitors", [])
+            if len(comps) < 2:
+                continue
+            status_type = event.get("status", {}).get("type", {})
+            if not status_type.get("completed", False):
+                continue
+            t1c = comps[0]; t2c = comps[1]
+            def _norm(raw_name):
+                n = _BRACKET_NORM.get(raw_name, raw_name)
+                if n in bracket_teams:
+                    return n
+                for bt in bracket_teams:
+                    if raw_name.lower() in bt.lower() or bt.lower() in raw_name.lower():
+                        return bt
+                return n
+            t1_name = _norm(t1c.get("team", {}).get("displayName", ""))
+            t2_name = _norm(t2c.get("team", {}).get("displayName", ""))
+            try:
+                t1_score = int(t1c.get("score", 0))
+                t2_score = int(t2c.get("score", 0))
+            except Exception:
+                t1_score = t2_score = 0
+            winner = t1_name if t1_score >= t2_score else t2_name
+            loser  = t2_name if t1_score >= t2_score else t1_name
+            headline = comp.get("notes", [{}])[0].get("headline", "")
+            results.append({
+                "t1": t1_name, "t2": t2_name,
+                "winner": winner, "loser": loser,
+                "t1_score": t1_score, "t2_score": t2_score,
+                "headline": headline,
+            })
+    except Exception:
+        pass
+    return results
+
+
+def build_recap_df(results, all_round_matchups, bkt_df):
+    """Correlate actual results with model predictions.
+    Returns a DataFrame with per-game analysis."""
+    if not results:
+        return pd.DataFrame()
+
+    # Build seed + flag lookup
+    seed_lkp  = {}
+    flag_lkp  = {}
+    score_lkp = {}
+    hl_lkp    = {}
+    for _, row in bkt_df.iterrows():
+        t = str(row.get("team", ""))
+        seed_lkp[t]  = int(row["seed"]) if pd.notna(row.get("seed")) else 0
+        score_lkp[t] = safe_f(row.get("contender_score", 50), 50)
+        flags = []
+        if row.get("fraud_favorite_flag"):      flags.append("Fraud Fav")
+        if row.get("cinderella_flag"):           flags.append("Cinderella")
+        if row.get("dangerous_low_seed_flag"):   flags.append("Dangerous")
+        if row.get("underseeded_flag"):          flags.append("Underseeded")
+        flag_lkp[t] = ", ".join(flags)
+        hl_lkp[t]   = hot_label(row)
+
+    # Build flat model-pick lookup: (t1, t2) -> model_winner
+    model_pick_lkp = {}
+    for rnd_name, matchup_list in all_round_matchups.items():
+        for t1n, t2n, w, l, reg in matchup_list:
+            model_pick_lkp[(t1n, t2n)] = (w, l, rnd_name)
+            model_pick_lkp[(t2n, t1n)] = (w, l, rnd_name)
+
+    rows = []
+    for g in results:
+        t1, t2, winner, loser = g["t1"], g["t2"], g["winner"], g["loser"]
+        s1 = score_lkp.get(t1, 50); s2 = score_lkp.get(t2, 50)
+        p_win = win_prob_sigmoid(s1, s2)  # prob t1 wins
+        model_pick_tuple = model_pick_lkp.get((t1, t2))
+        if model_pick_tuple:
+            model_winner, model_loser, rnd = model_pick_tuple
+        else:
+            model_winner = t1 if p_win >= 0.5 else t2
+            model_loser  = t2 if p_win >= 0.5 else t1
+            rnd = g.get("headline", "Tournament")
+        correct = (winner == model_winner)
+        model_conf = win_prob_sigmoid(
+            score_lkp.get(model_winner, 50),
+            score_lkp.get(model_loser, 50)
+        )
+        w_seed = seed_lkp.get(winner, 0)
+        l_seed = seed_lkp.get(loser, 0)
+        upset  = (w_seed > l_seed + 3) if w_seed and l_seed else False
+        rows.append({
+            "round":       rnd,
+            "t1":          t1, "t2": t2,
+            "winner":      winner, "loser": loser,
+            "t1_score":    g["t1_score"], "t2_score": g["t2_score"],
+            "model_pick":  model_winner,
+            "model_conf":  round(model_conf, 3),
+            "correct":     correct,
+            "upset":       upset,
+            "winner_seed": w_seed, "loser_seed": l_seed,
+            "winner_flags": flag_lkp.get(winner, ""),
+            "loser_flags":  flag_lkp.get(loser, ""),
+            "winner_hot":   hl_lkp.get(winner, ""),
+            "loser_hot":    hl_lkp.get(loser, ""),
+        })
+    return pd.DataFrame(rows)
+
+
 with tab7:
     st.markdown('<div class="section-header">📺 Live — NCAA Tournament Games</div>', unsafe_allow_html=True)
     st.caption("Live scores via ESPN · In-game win probability blends model pre-game score with live game state. Refreshes on demand.")
@@ -3697,3 +3817,275 @@ with tab9:
 
         else:
             st.info("No valid backtest data available. Run the backtest first.")
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 10 — RECAP  (live results + model performance analysis)
+# ─────────────────────────────────────────────────────────────────────────────
+with tab10:
+    st.markdown('<div class="section-header">📋 2026 Tournament Recap</div>', unsafe_allow_html=True)
+    st.caption("Model performance vs. actual results · Updates automatically as games are completed · Powered by ESPN data")
+
+    rc1, rc2 = st.columns([5, 1])
+    with rc2:
+        if st.button("🔄 Refresh Results", key="recap_refresh"):
+            st.cache_data.clear()
+            st.rerun()
+
+    bracket_team_set = frozenset(in_bracket["team"].tolist()) if len(in_bracket) > 0 else frozenset()
+    completed_games  = fetch_tournament_results(bracket_team_set)
+    recap_df         = build_recap_df(completed_games, all_round_matchups, in_bracket) if completed_games else pd.DataFrame()
+
+    if recap_df.empty:
+        st.markdown(
+            '<div style="text-align:center;padding:60px 20px;color:#64748b">'
+            '<div style="font-size:3rem">🏀</div>'
+            '<div style="font-size:1.2rem;font-weight:700;color:#94a3b8;margin-top:12px">No completed games yet</div>'
+            '<div style="margin-top:8px">Check back once tournament games are underway.<br/>'
+            'First Four tips off March 19 — Round of 64 begins March 20.</div>'
+            '</div>', unsafe_allow_html=True)
+    else:
+        total      = len(recap_df)
+        correct    = recap_df["correct"].sum()
+        acc_pct    = correct / total * 100 if total else 0
+        upsets     = recap_df["upset"].sum()
+        upsets_called = recap_df[recap_df["upset"] & recap_df["correct"]].shape[0]
+
+        # ── Section A: Scorecard header ────────────────────────────────────────
+        st.markdown("### Tournament Scorecard")
+        sc1, sc2, sc3, sc4, sc5 = st.columns(5)
+        sc1.metric("Games Played",    total)
+        sc2.metric("Model Correct",   f"{correct}/{total}")
+        sc3.metric("Accuracy",        f"{acc_pct:.0f}%")
+        sc4.metric("Upsets",          upsets)
+        sc5.metric("Upsets Called",   f"{upsets_called}/{upsets}" if upsets else "0")
+        st.markdown("---")
+
+        # ── Section B: Round-by-Round accuracy ────────────────────────────────
+        round_order = ["R64", "R32", "S16", "E8", "FF", "Championship"]
+        played_rounds = [r for r in round_order if r in recap_df["round"].values]
+        if played_rounds:
+            st.markdown("### Round-by-Round Accuracy")
+            rnd_cols = st.columns(len(played_rounds))
+            for i, rnd in enumerate(played_rounds):
+                rnd_df = recap_df[recap_df["round"] == rnd]
+                rc = rnd_df["correct"].sum()
+                rt = len(rnd_df)
+                rnd_label = {"R64":"Round of 64","R32":"Round of 32","S16":"Sweet 16",
+                             "E8":"Elite 8","FF":"Final Four","Championship":"Championship"}.get(rnd, rnd)
+                rnd_pct = rc/rt*100 if rt else 0
+                color = "#4ade80" if rnd_pct >= 70 else ("#fbbf24" if rnd_pct >= 50 else "#f87171")
+                rnd_cols[i].markdown(
+                    f'<div style="background:#131820;border:1px solid #1e293b;border-radius:8px;padding:12px;text-align:center">'
+                    f'<div style="color:#94a3b8;font-size:0.72rem;font-weight:600;text-transform:uppercase">{rnd_label}</div>'
+                    f'<div style="color:{color};font-size:1.6rem;font-weight:900;margin:4px 0">{rnd_pct:.0f}%</div>'
+                    f'<div style="color:#64748b;font-size:0.72rem">{rc}/{rt} correct</div>'
+                    f'</div>', unsafe_allow_html=True)
+            st.markdown("---")
+
+        # ── Section C: Game Results Table ─────────────────────────────────────
+        st.markdown("### Game Results")
+        for _, row in recap_df.sort_index(ascending=False).iterrows():
+            hit    = row["correct"]
+            upset  = row["upset"]
+            icon   = "✅" if hit else "❌"
+            upset_badge = ' <span style="background:#f97316;color:#000;border-radius:4px;padding:1px 5px;font-size:0.68rem;font-weight:700">UPSET</span>' if upset else ""
+            conf_pct = row["model_conf"] * 100
+            border = "#4ade80" if hit else "#f87171"
+            st.markdown(
+                f'<div style="background:#0f172a;border-left:3px solid {border};border-radius:6px;'
+                f'padding:10px 14px;margin-bottom:6px">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center">'
+                f'<div>'
+                f'<span style="color:#94a3b8;font-size:0.7rem;font-weight:600;text-transform:uppercase">{row["round"]}</span>'
+                f'<div style="color:#f1f5f9;font-weight:700;margin-top:2px">'
+                f'{icon} {row["winner"]} def. {row["loser"]} &nbsp;'
+                f'<span style="color:#64748b;font-size:0.85rem">({row["t1_score"]}–{row["t2_score"]})</span>'
+                f'{upset_badge}</div>'
+                f'<div style="color:#64748b;font-size:0.75rem;margin-top:3px">'
+                f'Model pick: <strong style="color:{"#4ade80" if hit else "#f87171"}">{row["model_pick"]}</strong>'
+                f' · Confidence: {conf_pct:.0f}%'
+                f'{"  · 🚩 " + row["loser_flags"] if row["loser_flags"] else ""}'
+                f'{"  · " + row["winner_hot"] if row["winner_hot"] else ""}'
+                f'</div></div>'
+                f'<div style="text-align:right">'
+                f'<div style="font-size:1.4rem">{icon}</div>'
+                f'<div style="color:#475569;font-size:0.68rem">#{row["winner_seed"]} beats #{row["loser_seed"]}</div>'
+                f'</div></div></div>', unsafe_allow_html=True)
+        st.markdown("---")
+
+        # ── Section D: Model Learnings ─────────────────────────────────────────
+        st.markdown("### Model Learnings")
+
+        with st.expander("🚩 Flag Report Card", expanded=True):
+            flag_types = [
+                ("Fraud Fav",  "Fraud Favorites",     "Teams the model flagged as overseeded — did they fold?"),
+                ("Cinderella", "Cinderella Teams",     "Teams with upset potential — did they deliver?"),
+                ("Dangerous",  "Dangerous Low Seeds",  "Double-digit seeds with elite metrics — did they pull upsets?"),
+                ("Underseeded","Underseeded Teams",    "Teams seeded lower than their metrics — did they outperform?"),
+            ]
+            for flag_key, flag_label, flag_desc in flag_types:
+                flagged_losers = recap_df[recap_df["loser_flags"].str.contains(flag_key, na=False)]
+                flagged_winners = recap_df[recap_df["winner_flags"].str.contains(flag_key, na=False)]
+                n_flagged_total = len(set(flagged_losers["loser"].tolist() + flagged_winners["winner"].tolist()))
+                if n_flagged_total == 0:
+                    continue
+                # For Fraud Fav & Dangerous/Cinderella: check if the flagged team played
+                if flag_key == "Fraud Fav":
+                    delivered = len(flagged_losers)  # lost = model correctly feared them
+                    desc_line = f"{delivered}/{n_flagged_total} lost as expected"
+                else:
+                    delivered = len(flagged_winners)  # won = pulled the upset / ran deeper
+                    desc_line = f"{delivered}/{n_flagged_total} outperformed"
+                pct = delivered / n_flagged_total * 100 if n_flagged_total else 0
+                bar_color = "#4ade80" if pct >= 60 else ("#fbbf24" if pct >= 40 else "#f87171")
+                st.markdown(
+                    f'<div style="margin-bottom:10px">'
+                    f'<div style="color:#f1f5f9;font-weight:700">{flag_label} '
+                    f'<span style="color:#64748b;font-size:0.8rem;font-weight:400">— {flag_desc}</span></div>'
+                    f'<div style="background:#1e293b;border-radius:4px;height:8px;margin:5px 0">'
+                    f'<div style="width:{min(pct,100):.0f}%;background:{bar_color};height:8px;border-radius:4px"></div></div>'
+                    f'<div style="color:{bar_color};font-size:0.8rem">{desc_line} ({pct:.0f}%)</div>'
+                    f'</div>', unsafe_allow_html=True)
+
+        with st.expander("🔥 Hot/Cold Team Performance"):
+            hot_rows  = recap_df[recap_df["winner_hot"].str.contains("HOT|Hot|Trending", na=False)]
+            cold_rows = recap_df[recap_df["loser_hot"].str.contains("Cold", na=False)]
+            hot_cold_cols = st.columns(2)
+            with hot_cold_cols[0]:
+                st.markdown("**🔥 Hot Teams — Tournament Record**")
+                hot_teams = recap_df[
+                    recap_df["t1"].map(lambda t: "HOT" in str(recap_df[recap_df["t1"]==t]["winner_hot"].values[0] if len(recap_df[recap_df["t1"]==t])>0 else "")) |
+                    recap_df["t2"].map(lambda t: "HOT" in str(recap_df[recap_df["t2"]==t]["winner_hot"].values[0] if len(recap_df[recap_df["t2"]==t])>0 else ""))
+                ]
+                # Simpler: just show all games where winner or loser was labeled hot
+                all_hot_games = recap_df[
+                    recap_df["winner_hot"].str.contains("HOT|Hot", na=False) |
+                    recap_df["loser_hot"].str.contains("HOT|Hot", na=False)
+                ]
+                if len(all_hot_games) > 0:
+                    hot_wins = all_hot_games[all_hot_games["winner_hot"].str.contains("HOT|Hot", na=False)]
+                    st.markdown(f"Hot teams went **{len(hot_wins)}-{len(all_hot_games)-len(hot_wins)}** so far")
+                    for _, r in all_hot_games.iterrows():
+                        icon2 = "✅" if r["winner_hot"] and ("HOT" in str(r["winner_hot"]) or "Hot" in str(r["winner_hot"])) else "❌"
+                        st.markdown(f'<small style="color:#94a3b8">{icon2} {r["winner"]} def. {r["loser"]}</small>', unsafe_allow_html=True)
+                else:
+                    st.caption("No hot teams have played yet.")
+            with hot_cold_cols[1]:
+                st.markdown("**❄️ Cold Teams — Tournament Record**")
+                cold_game_rows = recap_df[
+                    recap_df["winner_hot"].str.contains("Cold", na=False) |
+                    recap_df["loser_hot"].str.contains("Cold", na=False)
+                ]
+                if len(cold_game_rows) > 0:
+                    cold_wins = cold_game_rows[cold_game_rows["winner_hot"].str.contains("Cold", na=False)]
+                    st.markdown(f"Cold teams went **{len(cold_wins)}-{len(cold_game_rows)-len(cold_wins)}** so far")
+                    for _, r in cold_game_rows.iterrows():
+                        icon3 = "✅" if r["winner_hot"] and "Cold" in str(r["winner_hot"]) else "❌"
+                        st.markdown(f'<small style="color:#94a3b8">{icon3} {r["winner"]} def. {r["loser"]}</small>', unsafe_allow_html=True)
+                else:
+                    st.caption("No cold teams have played yet.")
+
+        with st.expander("💥 Biggest Misses"):
+            misses = recap_df[~recap_df["correct"]].sort_values("model_conf", ascending=False).head(5)
+            if misses.empty:
+                st.success("The model has been perfect so far! No misses.")
+            else:
+                for _, r in misses.iterrows():
+                    upset_txt = " (UPSET)" if r["upset"] else ""
+                    st.markdown(
+                        f'<div style="background:#1a0a0a;border-left:3px solid #f87171;border-radius:5px;padding:8px 12px;margin-bottom:5px">'
+                        f'<div style="color:#f87171;font-weight:700">❌ {r["winner"]} def. {r["model_pick"]}{upset_txt}</div>'
+                        f'<div style="color:#94a3b8;font-size:0.78rem">'
+                        f'Model was {r["model_conf"]*100:.0f}% confident · #{r["loser_seed"]} upset #{r["winner_seed"]}'
+                        f'{"  · Flags: " + r["loser_flags"] if r["loser_flags"] else ""}'
+                        f'</div></div>', unsafe_allow_html=True)
+
+        with st.expander("🎯 Clutch Calls — Model's Best Picks"):
+            hits = recap_df[recap_df["correct"]].sort_values("model_conf", ascending=False).head(5)
+            if hits.empty:
+                st.caption("No correct predictions logged yet.")
+            else:
+                for _, r in hits.iterrows():
+                    st.markdown(
+                        f'<div style="background:#0a1a0a;border-left:3px solid #4ade80;border-radius:5px;padding:8px 12px;margin-bottom:5px">'
+                        f'<div style="color:#4ade80;font-weight:700">✅ {r["winner"]} def. {r["loser"]}</div>'
+                        f'<div style="color:#94a3b8;font-size:0.78rem">'
+                        f'Model confidence: {r["model_conf"]*100:.0f}% · Seed {r["winner_seed"]} over {r["loser_seed"]}'
+                        f'{"  · " + r["winner_hot"] if r["winner_hot"] else ""}'
+                        f'</div></div>', unsafe_allow_html=True)
+
+        with st.expander("📊 What's Predictive So Far — Model Feature Analysis", expanded=True):
+            st.caption("For each completed game, which model stats were higher for the actual winner vs. the loser? Positive = winner advantage.")
+            feat_cols = [
+                ("contender_score",         "Contender Score"),
+                ("defense_score",           "Defense Score"),
+                ("clutch_score",            "Clutch Score"),
+                ("guard_play_score",        "Guard Play"),
+                ("rebounding_score",        "Rebounding"),
+                ("adj_margin",              "Adj. Margin"),
+                ("last10_win_pct",          "Last 10 Win%"),
+                ("strength_of_schedule",    "Strength of Schedule"),
+            ]
+            feat_diffs = []
+            for feat_key, feat_label in feat_cols:
+                if feat_key not in bkt_df.columns:
+                    continue
+                feat_lkp = {str(r["team"]): safe_f(r.get(feat_key)) for _, r in bkt_df.iterrows()}
+                diffs = []
+                for _, row in recap_df.iterrows():
+                    w_val = feat_lkp.get(row["winner"], None)
+                    l_val = feat_lkp.get(row["loser"], None)
+                    if w_val is not None and l_val is not None:
+                        diffs.append(w_val - l_val)
+                if not diffs:
+                    continue
+                avg_diff = sum(diffs) / len(diffs)
+                pct_positive = sum(1 for d in diffs if d > 0) / len(diffs) * 100
+                feat_diffs.append((feat_label, avg_diff, pct_positive, len(diffs)))
+
+            if not feat_diffs:
+                st.caption("Feature analysis will populate as games complete.")
+            else:
+                feat_diffs.sort(key=lambda x: x[2], reverse=True)
+                for feat_label, avg_diff, pct_pos, n in feat_diffs:
+                    bar_w = min(int(abs(pct_pos - 50) * 2), 100)
+                    if pct_pos >= 60:
+                        bar_color = "#4ade80"; trend = "↑ Winner usually higher"
+                    elif pct_pos <= 40:
+                        bar_color = "#f87171"; trend = "↓ Loser sometimes higher"
+                    else:
+                        bar_color = "#94a3b8"; trend = "→ Neutral"
+                    st.markdown(
+                        f'<div style="margin-bottom:8px">'
+                        f'<div style="display:flex;justify-content:space-between;align-items:center">'
+                        f'<span style="color:#f1f5f9;font-size:0.85rem;font-weight:600">{feat_label}</span>'
+                        f'<span style="color:{bar_color};font-size:0.78rem">{pct_pos:.0f}% winner had more · avg diff {avg_diff:+.1f}</span>'
+                        f'</div>'
+                        f'<div style="background:#1e293b;border-radius:3px;height:6px;margin-top:3px">'
+                        f'<div style="width:{bar_w}%;background:{bar_color};height:6px;border-radius:3px"></div></div>'
+                        f'<div style="color:#475569;font-size:0.7rem">{trend} (n={n})</div>'
+                        f'</div>', unsafe_allow_html=True)
+
+                # Calibration check: is 70% confidence really winning 70% of games?
+                st.markdown("---")
+                st.markdown("**Confidence Calibration** — Is the model's confidence accurate?")
+                buckets = [(0.5, 0.6, "50–60%"), (0.6, 0.7, "60–70%"), (0.7, 0.8, "70–80%"), (0.8, 1.01, "80%+")]
+                cal_cols = st.columns(len(buckets))
+                for ci, (lo, hi, label) in enumerate(buckets):
+                    bucket_df = recap_df[(recap_df["model_conf"] >= lo) & (recap_df["model_conf"] < hi)]
+                    if len(bucket_df) == 0:
+                        cal_cols[ci].markdown(
+                            f'<div style="background:#131820;border-radius:6px;padding:8px;text-align:center">'
+                            f'<div style="color:#475569;font-size:0.72rem">{label}</div>'
+                            f'<div style="color:#475569;font-size:1.1rem">—</div>'
+                            f'<div style="color:#475569;font-size:0.68rem">no games</div>'
+                            f'</div>', unsafe_allow_html=True)
+                    else:
+                        actual = bucket_df["correct"].mean() * 100
+                        color = "#4ade80" if abs(actual - (lo+hi)/2*100) < 15 else "#fbbf24"
+                        cal_cols[ci].markdown(
+                            f'<div style="background:#131820;border-radius:6px;padding:8px;text-align:center">'
+                            f'<div style="color:#94a3b8;font-size:0.72rem">{label}</div>'
+                            f'<div style="color:{color};font-size:1.4rem;font-weight:900">{actual:.0f}%</div>'
+                            f'<div style="color:#64748b;font-size:0.68rem">actual · {len(bucket_df)} games</div>'
+                            f'</div>', unsafe_allow_html=True)
