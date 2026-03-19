@@ -559,6 +559,8 @@ def load_data():
         "NC State": "North Carolina State",
         "N.C. State": "North Carolina State",
         "Miami (FL)": "Miami",
+        "McNeese State": "McNeese",
+        "Prairie View": "Prairie View A&M",
     }
     if len(bracket) > 0 and "team" in bracket.columns:
         score_teams = set(scores["team"].tolist()) if len(scores) > 0 else set()
