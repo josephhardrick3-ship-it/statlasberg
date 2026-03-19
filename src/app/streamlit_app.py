@@ -1581,23 +1581,20 @@ with tab6:
             p2 = 1 - p1
             model_fav = t1 if p1 >= p2 else t2
 
-            pc1, pc2 = st.columns(2)
-            for col, team, p, cs in [(pc1, t1, p1, c1), (pc2, t2, p2, c2)]:
-                with col:
-                    picked = (current_pick == team)
-                    is_model = (team == model_fav)
-                    bdr = "#4ade80" if picked else ("#f97316" if is_model else "#374151")
-                    label = f"{'✅ ' if picked else ''}{team}"
-                    st.markdown(
-                        f'<div style="background:#131820;border:2px solid {bdr};border-radius:8px;padding:8px;margin-bottom:4px">'
-                        f'<div style="font-size:0.9rem;font-weight:700;color:#f1f5f9">{label}</div>'
-                        f'<div style="color:#64748b;font-size:0.72rem">Score: {cs:.1f} · Model: {p*100:.0f}%</div>'
-                        f'</div>', unsafe_allow_html=True)
-                    tname = team
-                    if st.button(f"Pick {tname}", key=f"ubpick_{key}_{tname}", use_container_width=True,
-                                 type="primary" if picked else "secondary"):
-                        st.session_state.user_bracket_picks[key] = tname
-                        st.rerun()
+            for team, p, cs in [(t1, p1, c1), (t2, p2, c2)]:
+                picked = (current_pick == team)
+                is_model = (team == model_fav)
+                bdr = "#4ade80" if picked else ("#f97316" if is_model else "#374151")
+                label = f"{'✅ ' if picked else ''}{team}"
+                st.markdown(
+                    f'<div style="background:#131820;border:2px solid {bdr};border-radius:8px;padding:8px;margin-bottom:4px">'
+                    f'<div style="font-size:0.9rem;font-weight:700;color:#f1f5f9">{label}</div>'
+                    f'<div style="color:#64748b;font-size:0.72rem">Score: {cs:.1f} · Model: {p*100:.0f}%</div>'
+                    f'</div>', unsafe_allow_html=True)
+                if st.button(f"Pick {team}", key=f"ubpick_{key}_{team}", use_container_width=True,
+                             type="primary" if picked else "secondary"):
+                    st.session_state.user_bracket_picks[key] = team
+                    st.rerun()
 
             if current_pick:
                 st.markdown(
