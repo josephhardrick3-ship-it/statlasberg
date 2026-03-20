@@ -2617,13 +2617,23 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
     if os.path.exists(_RESULTS_CSV):
         try:
             old_df = pd.read_csv(_RESULTS_CSV)
-            # Normalize legacy round labels: rows whose round contains "first four"
-            # (raw ESPN headline) should be "FF4"
+            # Normalize raw ESPN headline strings → standard round codes
             known_rounds = {"FF4", "R64", "R32", "S16", "E8", "FF", "Championship"}
             if "round" in old_df.columns:
-                mask = ~old_df["round"].isin(known_rounds) & \
-                       old_df["round"].str.lower().str.contains("first four", na=False)
-                old_df.loc[mask, "round"] = "FF4"
+                rl = old_df["round"].astype(str).str.lower()
+                bad = ~old_df["round"].isin(known_rounds)
+                old_df.loc[bad & rl.str.contains("first four",   na=False), "round"] = "FF4"
+                old_df.loc[bad & rl.str.contains("1st round",    na=False), "round"] = "R64"
+                old_df.loc[bad & rl.str.contains("second round", na=False), "round"] = "R32"
+                old_df.loc[bad & rl.str.contains("2nd round",    na=False), "round"] = "R32"
+                old_df.loc[bad & rl.str.contains("sweet 16",     na=False), "round"] = "S16"
+                old_df.loc[bad & rl.str.contains("elite 8",      na=False), "round"] = "E8"
+                old_df.loc[bad & rl.str.contains("final four",   na=False) &
+                           ~rl.str.contains("first",             na=False), "round"] = "FF"
+                old_df.loc[bad & rl.str.contains("championship", na=False), "round"] = "Championship"
+                # Any still-unknown rows with typical R64 patterns (regional/1st round variants)
+                bad2 = ~old_df["round"].isin(known_rounds)
+                old_df.loc[bad2, "round"] = "R64"  # safest default for unclassified tournament games
             existing_ids = set(str(x) for x in old_df["event_id"].tolist())
             existing_rows = old_df.to_dict("records")
         except Exception:
@@ -2646,11 +2656,23 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
             model_loser  = t2 if model_winner == t1 else t1
             # Use ESPN headline to detect First Four — don't use dates alone
             # because March 20 has both First Four AND R64 games
-            headline = g.get("headline", "")
-            if "first four" in headline.lower():
+            headline = g.get("headline", "").lower()
+            if "first four" in headline:
                 rnd = "FF4"
+            elif "1st round" in headline or "first round" in headline:
+                rnd = "R64"
+            elif "second round" in headline or "2nd round" in headline:
+                rnd = "R32"
+            elif "sweet 16" in headline:
+                rnd = "S16"
+            elif "elite 8" in headline:
+                rnd = "E8"
+            elif "final four" in headline and "first" not in headline:
+                rnd = "FF"
+            elif "championship" in headline:
+                rnd = "Championship"
             else:
-                rnd = headline or "Tournament"
+                rnd = "R64"  # default: unmatched tournament games are most likely R64
             region = ""
         correct    = (winner == model_winner)
         model_conf = win_prob_sigmoid(score_lkp.get(model_winner, 50), score_lkp.get(model_loser, 50))
