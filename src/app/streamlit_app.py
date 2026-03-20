@@ -531,7 +531,7 @@ COACH_COLS = ["team","coach","coach_years_at_school","coach_ncaa_games",
 
 # Module-level so all functions (including cached ones) can reference it without scope issues
 _BRACKET_NORM = {
-    # Sample-data aliases → full SR names (no-ops on real data)
+    # Sample-data aliases → canonical names
     "BYU": "Brigham Young",
     "TCU": "Texas Christian",
     "Saint Marys CA": "Saint Mary's",
@@ -542,7 +542,6 @@ _BRACKET_NORM = {
     "Pitt": "Pittsburgh",
     "UMBC": "Maryland-Baltimore County",
     "LIU": "Long Island University",
-    # Also handle common display variants that may appear in custom brackets
     "St. Mary's": "Saint Mary's",
     "Saint John's": "St. John's",
     "NC State": "North Carolina State",
@@ -550,6 +549,73 @@ _BRACKET_NORM = {
     "Miami (FL)": "Miami",
     "McNeese State": "McNeese",
     "Prairie View": "Prairie View A&M",
+    # ESPN display names (full nickname form) → bracket canonical names
+    "TCU Horned Frogs": "Texas Christian",
+    "BYU Cougars": "Brigham Young",
+    "VCU Rams": "Virginia Commonwealth",
+    "SMU Mustangs": "Southern Methodist",
+    "Saint Mary's Gaels": "Saint Mary's",
+    "Saint Mary's (CA)": "Saint Mary's",
+    "Duke Blue Devils": "Duke",
+    "Michigan Wolverines": "Michigan",
+    "Michigan State Spartans": "Michigan State",
+    "Ohio State Buckeyes": "Ohio State",
+    "Nebraska Cornhuskers": "Nebraska",
+    "Arkansas Razorbacks": "Arkansas",
+    "Wisconsin Badgers": "Wisconsin",
+    "Vanderbilt Commodores": "Vanderbilt",
+    "Louisville Cardinals": "Louisville",
+    "North Carolina Tar Heels": "North Carolina",
+    "Texas Longhorns": "Texas",
+    "Texas A&M Aggies": "Texas A&M",
+    "Georgia Bulldogs": "Georgia",
+    "Iowa State Cyclones": "Iowa State",
+    "Iowa Hawkeyes": "Iowa",
+    "Illinois Fighting Illini": "Illinois",
+    "Houston Cougars": "Houston",
+    "Florida Gators": "Florida",
+    "Arizona Wildcats": "Arizona",
+    "Purdue Boilermakers": "Purdue",
+    "Gonzaga Bulldogs": "Gonzaga",
+    "Kansas Jayhawks": "Kansas",
+    "Tennessee Volunteers": "Tennessee",
+    "Virginia Cavaliers": "Virginia",
+    "Alabama Crimson Tide": "Alabama",
+    "Kentucky Wildcats": "Kentucky",
+    "Texas Tech Red Raiders": "Texas Tech",
+    "Connecticut Huskies": "Connecticut",
+    "Houston Cougars": "Houston",
+    "St. John's Red Storm": "St. John's",
+    "St John's Red Storm": "St. John's",
+    "UCLA Bruins": "UCLA",
+    "Villanova Wildcats": "Villanova",
+    "Miami Hurricanes": "Miami",
+    "North Carolina State Wolfpack": "North Carolina State",
+    "NC State Wolfpack": "North Carolina State",
+    "Siena Saints": "Siena",
+    "Howard Bison": "Howard",
+    "North Dakota State Bison": "North Dakota State",
+    "High Point Panthers": "High Point",
+    "McNeese Cowboys": "McNeese",
+    "Troy Trojans": "Troy",
+    "South Florida Bulls": "South Florida",
+    "Pennsylvania Quakers": "Pennsylvania",
+    "Hawai'i Rainbow Warriors": "Hawaii",
+    "Hawaii Rainbow Warriors": "Hawaii",
+    "Idaho Vandals": "Idaho",
+    "Kennesaw State Owls": "Kennesaw State",
+    "Saint Louis Billikens": "Saint Louis",
+    "Utah State Aggies": "Utah State",
+    "Santa Clara Broncos": "Santa Clara",
+    "Hofstra Pride": "Hofstra",
+    "Akron Zips": "Akron",
+    "Wright State Raiders": "Wright State",
+    "Tennessee State Tigers": "Tennessee State",
+    "Furman Paladins": "Furman",
+    "Long Island University Sharks": "Long Island University",
+    "Queens Royals": "Queens",
+    "California Baptist Lancers": "California Baptist",
+    "Prairie View A&M Panthers": "Prairie View A&M",
 }
 
 @st.cache_data(ttl=60)  # re-read files every 60 s so pipeline updates show immediately
@@ -2312,12 +2378,15 @@ def fetch_all_tournament_games(bracket_teams):
     seen = {}
 
     def _norm(raw_name, bt_set):
+        # 1. Exact lookup in normalization dict first
         n = _BRACKET_NORM.get(raw_name, raw_name)
         if n in bt_set:
             return n
-        for bt in bt_set:
-            if raw_name.lower() in bt.lower() or bt.lower() in raw_name.lower():
-                return bt
+        # 2. Fuzzy substring match — prefer LONGEST matching bracket name to avoid
+        #    "Michigan" matching "Michigan State Spartans" before "Michigan State"
+        matches = [bt for bt in bt_set if bt.lower() in raw_name.lower() or raw_name.lower() in bt.lower()]
+        if matches:
+            return max(matches, key=len)  # longest = most specific
         return n
 
     for d in _TOURNEY_DATES:
@@ -2720,13 +2789,12 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
 
     result_df = pd.DataFrame(all_rows)
 
-    # Save updated CSV (only if new rows added)
-    if new_rows:
-        try:
-            os.makedirs(os.path.dirname(_RESULTS_CSV), exist_ok=True)
-            result_df.to_csv(_RESULTS_CSV, index=False)
-        except Exception:
-            pass
+    # Always save — ensures normalized round labels are persisted back to disk
+    try:
+        os.makedirs(os.path.dirname(_RESULTS_CSV), exist_ok=True)
+        result_df.to_csv(_RESULTS_CSV, index=False)
+    except Exception:
+        pass
 
     return result_df
 
