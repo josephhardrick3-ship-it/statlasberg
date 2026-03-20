@@ -610,6 +610,28 @@ else:
     sim_rounds, sim_s16, sim_e8, sim_ff, sim_champion, sim_runner_up = {}, [], [], [], "", ""
     in_bracket["sim_round"] = "First Round"
 
+# ── Update championship odds based on actual results ────────────────────────
+# Teams that have been eliminated get 0% championship probability.
+# Remaining teams' probabilities are renormalized.
+_actual_results_csv = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "data", "outputs", "game_results_2026.csv"
+)
+if len(champs) > 0 and "championship_pct" in champs.columns and os.path.exists(_actual_results_csv):
+    try:
+        _results_live = pd.read_csv(_actual_results_csv)
+        if "loser" in _results_live.columns and not _results_live.empty:
+            _eliminated = set(_results_live["loser"].dropna().str.strip().tolist())
+            _mask = champs["team"].isin(_eliminated)
+            if _mask.any():
+                champs = champs.copy()
+                champs.loc[_mask, "championship_pct"] = 0.0
+                _total = champs["championship_pct"].sum()
+                if _total > 0:
+                    champs["championship_pct"] = champs["championship_pct"] / _total * 100
+    except Exception:
+        pass
+
 # Results tracker (persistent via session state + CSV)
 if "results" not in st.session_state:
     if os.path.exists(RESULTS_PATH):
@@ -683,10 +705,10 @@ if st.session_state.dive_team:
         st.rerun()
 
 # ── Main tabs ─────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
-    "🏅 Rankings", "🎯 Sweet 16 Picks", "🔍 Team Deep Dive",
-    "📊 Model vs Committee", "🎲 Championship Odds", "🏆 Bracket", "📺 Live",
-    "📊 Model Comparison", "📈 Model Accuracy", "📋 Recap"
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    "🏅 Rankings", "🎯 Picks", "🔍 Team Deep Dive",
+    "🎲 Championship Odds", "🏆 Bracket", "📺 Live",
+    "📈 Model Accuracy", "📋 Recap"
 ])
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1300,114 +1322,9 @@ with tab3:
 # ─────────────────────────────────────────────────────────────────────────────
 # TAB 4 — MODEL vs COMMITTEE
 # ─────────────────────────────────────────────────────────────────────────────
+# TAB 4 — CHAMPIONSHIP ODDS
+# ─────────────────────────────────────────────────────────────────────────────
 with tab4:
-    st.markdown('<div class="section-header">Model vs. Selection Committee — Seed Disagreement Analysis</div>', unsafe_allow_html=True)
-
-    if "seed" not in in_bracket.columns:
-        st.warning("Bracket/seed data not loaded.")
-    else:
-        # ── Compute model's predicted seed within each region ─────────────────
-        # Method: rank every team in the region by contender_score (highest = #1 seed).
-        # The gap (actual_seed − model_seed) tells us who the committee under/over-valued.
-        model_seeded_parts = []
-        for region in ["East","South","West","Midwest"]:
-            reg = in_bracket[in_bracket["region"]==region].copy()
-            reg = reg.sort_values("contender_score", ascending=False).reset_index(drop=True)
-            reg["model_seed"] = reg.index + 1   # rank 1 = strongest score in region
-            model_seeded_parts.append(reg)
-        model_seeded_df = pd.concat(model_seeded_parts, ignore_index=True)
-        # positive gap = actual seed higher number than model seed = UNDERSEEDED (model loves them more)
-        model_seeded_df["seed_gap"] = model_seeded_df["seed"] - model_seeded_df["model_seed"]
-
-        st.info("**How the model derives its predicted seed:** Within each region, every team is ranked 1–16 by their *contender score* (composite of adjusted margin, SOS, offensive/defensive efficiency, clutch, and recent form). The team ranked #1 in a region by the model is the model's predicted #1 seed. A positive gap means the committee seeded that team *lower* than the model would — they are underseeded in the model's view. **First-round win predictions are shown for all underseeded teams.**")
-
-        mv1, mv2 = st.columns(2)
-        with mv1:
-            st.markdown('<div class="section-header">🟢 Underseeded — Model Ranks Higher Than Committee</div>', unsafe_allow_html=True)
-            st.caption("Committee gave them a tougher draw than they deserve.")
-            underseeded = model_seeded_df[model_seeded_df["seed_gap"] > 0].sort_values("seed_gap", ascending=False).head(10)
-            for _, r in underseeded.iterrows():
-                actual_seed = int(r["seed"]) if pd.notna(r.get("seed")) else 0
-                mseed = int(r["model_seed"]) if pd.notna(r.get("model_seed")) else 0
-                gap = int(r["seed_gap"]) if pd.notna(r.get("seed_gap")) else 0
-                bar_w = min(100, gap * 8)
-                # First-round matchup opponent (seed that sums to 17 with actual_seed)
-                opp_seed = 17 - actual_seed
-                opp_rows = in_bracket[(in_bracket["region"]==r["region"]) & (in_bracket["seed"]==opp_seed)]
-                opp_name = opp_rows.iloc[0]["team"] if len(opp_rows) > 0 else f"#{opp_seed} seed"
-                opp_score = safe_f(opp_rows.iloc[0]["contender_score"] if len(opp_rows) > 0 else 55)
-                wp = win_prob_sigmoid(r["contender_score"], opp_score)
-                win_verdict = f'<span style="color:#4ade80;font-weight:700">✅ Model picks {r["team"]} to WIN R1 ({wp*100:.0f}%)</span>' if wp > 0.5 \
-                              else f'<span style="color:#f87171;font-weight:700">⚠️ Model still picks #{opp_seed} {opp_name} ({(1-wp)*100:.0f}%)</span>'
-                score_drivers = []
-                if safe_f(r.get("adj_margin",0)) > 12: score_drivers.append("strong margin")
-                if safe_f(r.get("strength_of_schedule",0)) > 5: score_drivers.append("tough schedule")
-                if safe_f(r.get("last10_win_pct",0.5)) >= 0.8: score_drivers.append("hot streak")
-                if safe_f(r.get("clutch_score",50)) > 60: score_drivers.append("clutch performer")
-                why = f" ({', '.join(score_drivers)})" if score_drivers else ""
-                st.markdown(f"""
-                <div class="team-card">
-                    <span class="seed-badge" style="background:#374151">#{actual_seed}</span>
-                    <strong class="team-name">{r['team']}</strong>
-                    <span style="color:#4ade80;font-weight:700;font-size:0.88rem"> → Model: #{mseed} seed (+{gap} spots)</span>
-                    <br/><small style="color:#94a3b8">Score: {r['contender_score']:.1f}{why} · Risk: {r['upset_risk_score']:.1f}</small>
-                    <div style="background:#2d3748;border-radius:4px;margin-top:4px;height:5px">
-                        <div style="width:{bar_w}%;background:#4ade80;height:5px;border-radius:4px"></div>
-                    </div>
-                    <small style="color:#64748b">R1 vs #{opp_seed} {opp_name}:</small> {win_verdict}
-                </div>
-                """, unsafe_allow_html=True)
-
-        with mv2:
-            st.markdown('<div class="section-header">🔴 Overseeded — Committee Ranks Higher Than Model</div>', unsafe_allow_html=True)
-            st.caption("Committee gave them a better draw than the model thinks they deserve.")
-            overseeded = model_seeded_df[model_seeded_df["seed_gap"] < 0].sort_values("seed_gap").head(10)
-            for _, r in overseeded.iterrows():
-                actual_seed = int(r["seed"]) if pd.notna(r.get("seed")) else 0
-                mseed = int(r["model_seed"]) if pd.notna(r.get("model_seed")) else 0
-                gap = abs(int(r["seed_gap"])) if pd.notna(r.get("seed_gap")) else 0
-                bar_w = min(100, gap * 8)
-                opp_seed = 17 - actual_seed
-                opp_rows = in_bracket[(in_bracket["region"]==r["region"]) & (in_bracket["seed"]==opp_seed)]
-                opp_name = opp_rows.iloc[0]["team"] if len(opp_rows) > 0 else f"#{opp_seed} seed"
-                opp_score = safe_f(opp_rows.iloc[0]["contender_score"] if len(opp_rows) > 0 else 55)
-                wp = win_prob_sigmoid(r["contender_score"], opp_score)
-                upset_risk = f'<span style="color:#f87171;font-weight:700">⚠️ Upset risk: #{opp_seed} {opp_name} ({(1-wp)*100:.0f}% per model)</span>' if (1-wp) > 0.38 \
-                             else f'<span style="color:#94a3b8">Model still picks {r["team"]} to win R1 ({wp*100:.0f}%)</span>'
-                st.markdown(f"""
-                <div class="team-card">
-                    <span class="seed-badge" style="background:#7f1d1d">#{actual_seed}</span>
-                    <strong class="team-name">{r['team']}</strong>
-                    <span style="color:#f87171;font-weight:700;font-size:0.88rem"> → Model: #{mseed} seed (−{gap} spots)</span>
-                    <br/><small style="color:#94a3b8">Score: {r['contender_score']:.1f} · Risk: {r['upset_risk_score']:.1f}</small>
-                    <div style="background:#2d3748;border-radius:4px;margin-top:4px;height:5px">
-                        <div style="width:{bar_w}%;background:#ef4444;height:5px;border-radius:4px"></div>
-                    </div>
-                    <small style="color:#64748b">R1 vs #{opp_seed} {opp_name}:</small> {upset_risk}
-                </div>
-                """, unsafe_allow_html=True)
-
-        if len(bracket) > 0:
-            snubs = scores[(scores["contender_score"]>=63) & (~scores["team"].isin(bracket["team"]))].sort_values("contender_score", ascending=False)
-            if len(snubs) > 0:
-                st.markdown("---")
-                st.markdown('<div class="section-header">🚨 Biggest Snubs (model 63+ score, not in bracket)</div>', unsafe_allow_html=True)
-                snub_cols = st.columns(min(4, len(snubs)))
-                for idx, (_, r) in enumerate(snubs.head(4).iterrows()):
-                    with snub_cols[idx]:
-                        st.markdown(f"""
-                        <div class="team-card">
-                            <div class="team-name">{r['team']}</div>
-                            <div class="team-score">Score: {r['contender_score']:.1f}</div>
-                            <small style="color:#f87171">Left out · Model rank among all teams: top {int(scores.sort_values('contender_score',ascending=False).reset_index(drop=True).index[scores['team']==r['team']].tolist()[0]+1) if len(scores[scores['team']==r['team']])>0 else '?'}</small>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TAB 5 — CHAMPIONSHIP ODDS
-# ─────────────────────────────────────────────────────────────────────────────
-with tab5:
     st.markdown('<div class="section-header">Championship Probabilities — 500,000 Bracket Simulations</div>', unsafe_allow_html=True)
 
     if len(champs) == 0:
@@ -1459,9 +1376,9 @@ with tab5:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TAB 6 — INTERACTIVE BRACKET
+# TAB 5 — INTERACTIVE BRACKET
 # ─────────────────────────────────────────────────────────────────────────────
-with tab6:
+with tab5:
     st.markdown('<div class="section-header">🏆 2026 NCAA Tournament — Interactive Bracket</div>', unsafe_allow_html=True)
     st.caption("Model line vs. historical seed-based public line. Click any matchup → full analysis. Log results to track model accuracy.")
 
@@ -2097,6 +2014,89 @@ ESPN_PLAYBYPLAY = (
     "https://site.api.espn.com/apis/site/v2/sports/basketball/"
     "mens-college-basketball/summary?event={event_id}"
 )
+# NCAA.com official scoreboard (authoritative, real-time)
+_NCAA_SCOREBOARD = (
+    "https://data.ncaa.com/casablanca/scoreboard/basketball-men/d1/"
+    "{year}/{month}/{day}/scoreboard.json"
+)
+
+
+@st.cache_data(ttl=25)
+def fetch_ncaa_live_games():
+    """Fetch live scores from NCAA.com official scoreboard — second source to
+    cross-check ESPN and catch any games ESPN's filter misses."""
+    if not _REQUESTS_OK:
+        return []
+    try:
+        from datetime import datetime
+        now = datetime.now()
+        url = _NCAA_SCOREBOARD.format(
+            year=now.year, month=f"{now.month:02d}", day=f"{now.day:02d}"
+        )
+        resp = _requests.get(url, timeout=6, headers={
+            "User-Agent": "statlasberg/1.0", "Accept": "application/json"
+        })
+        resp.raise_for_status()
+        data = resp.json()
+        games = []
+        for gw in data.get("games", []):
+            g = gw.get("game", {})
+            home = g.get("home", {}); away = g.get("away", {})
+            state_raw = g.get("gameState", "pre").lower()
+            state = "in" if state_raw in ("live", "in") else "post" if "final" in state_raw else "pre"
+            period_raw = g.get("currentPeriod", "")
+            period = 2 if any(x in period_raw for x in ("2H", "H2", "2nd")) else 1
+            try:
+                h_sc = int(home.get("score", 0) or 0)
+                a_sc = int(away.get("score", 0) or 0)
+            except Exception:
+                h_sc = a_sc = 0
+            games.append({
+                "event_id": "ncaa_" + str(g.get("gameID", "")),
+                "state": state, "period": period,
+                "clock": g.get("contestClock", ""),
+                "team1": {
+                    "name":   home.get("names", {}).get("full", home.get("names", {}).get("short", "")),
+                    "score":  h_sc,
+                    "record": home.get("record", ""),
+                },
+                "team2": {
+                    "name":   away.get("names", {}).get("full", away.get("names", {}).get("short", "")),
+                    "score":  a_sc,
+                    "record": away.get("record", ""),
+                },
+                "headline": g.get("network", ""),
+                "source": "NCAA",
+            })
+        return games
+    except Exception:
+        return []
+
+
+def _team_card_html(name, score_str, record, subtitle, border="#374151",
+                    score_color="#f1f5f9", badge=""):
+    """Shared team card block used across live, finished, and upcoming sections."""
+    return (
+        f'<div style="background:#131820;border:2px solid {border};'
+        f'border-radius:8px;padding:10px;margin-bottom:4px">'
+        f'<div style="font-size:1rem;font-weight:800;color:#f1f5f9">'
+        f'{name}{(" " + badge) if badge else ""}</div>'
+        f'<div style="font-size:2rem;font-weight:900;color:{score_color}">{score_str}</div>'
+        f'<div style="color:#94a3b8;font-size:0.75rem">{record}</div>'
+        f'<div style="color:#64748b;font-size:0.75rem;margin-top:3px">{subtitle}</div>'
+        f'</div>'
+    )
+
+
+def _prob_bar_html(p, color):
+    """Win probability fill bar."""
+    return (
+        f'<div style="background:#2d3748;border-radius:4px;height:7px;margin:5px 0">'
+        f'<div style="width:{int(p*100)}%;background:{color};height:7px;border-radius:4px"></div>'
+        f'</div>'
+        f'<div style="color:{color};font-weight:700;font-size:0.95rem">'
+        f'{p*100:.0f}% win prob</div>'
+    )
 
 
 def fetch_live_games():
@@ -2731,247 +2731,244 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
     return result_df
 
 
-with tab7:
-    st.markdown('<div class="section-header">📺 Live — NCAA Tournament Games</div>', unsafe_allow_html=True)
-    st.caption("Live scores via ESPN · In-game win probability blends model pre-game score with live game state. Refreshes on demand.")
+with tab6:
+    st.markdown('<div class="section-header">📺 Live — NCAA Tournament</div>', unsafe_allow_html=True)
 
-    col_ctrl1, col_ctrl2, col_ctrl3 = st.columns([1, 1, 4])
-    with col_ctrl1:
+    ctrl1, ctrl2, _ = st.columns([1, 1, 4])
+    with ctrl1:
         auto_ref = st.toggle("⏱ Auto-refresh (60s)", value=False, key="live_auto_refresh")
-    with col_ctrl2:
-        if st.button("🔄 Refresh now", key="live_refresh_btn"):
+    with ctrl2:
+        if st.button("🔄 Refresh", key="live_refresh_btn"):
             st.cache_data.clear()
-
     if auto_ref:
         st.markdown('<meta http-equiv="refresh" content="60">', unsafe_allow_html=True)
 
     if not _REQUESTS_OK:
-        st.warning("⚠️ `requests` library not installed. Run `pip install requests` and restart.")
+        st.warning("⚠️ `requests` not installed. Run `pip install requests` and restart.")
     else:
-        with st.spinner("Fetching live games from ESPN…"):
-            live_games = fetch_live_games()
+        # Fetch from ESPN (primary) and NCAA.com (secondary), merge
+        with st.spinner("Fetching scores…"):
+            espn_games = fetch_live_games()
+            ncaa_games = fetch_ncaa_live_games()
 
-        # Filter to tournament-relevant games (status=in or post from today)
-        live_now   = [g for g in live_games if g["state"] == "in"]
-        recent_fin = [g for g in live_games if g["state"] == "post"][:8]
-        upcoming   = [g for g in live_games if g["state"] == "pre"][:8]
+        # NCAA supplements ESPN — add games ESPN missed (match by team name pair)
+        espn_pairs = {
+            (g["team1"]["name"].lower(), g["team2"]["name"].lower())
+            for g in espn_games
+        }
+        extra = [
+            g for g in ncaa_games
+            if (g["team1"]["name"].lower(), g["team2"]["name"].lower()) not in espn_pairs
+            and (g["team2"]["name"].lower(), g["team1"]["name"].lower()) not in espn_pairs
+        ]
+        all_games = espn_games + extra
 
-        if not live_games:
-            st.info("🏀 No NCAA tournament games found right now. Games appear here once tipoff. Check back during tournament play (March 20 – April 7, 2026).")
+        live_now   = [g for g in all_games if g["state"] == "in"]
+        recent_fin = [g for g in all_games if g["state"] == "post"][:8]
+        upcoming   = [g for g in all_games if g["state"] == "pre"][:8]
+
+        # Seed/flag helpers (used in Final Scores section)
+        def _live_get_seed(team_name):
+            norm = _BRACKET_NORM.get(team_name, team_name)
+            rm = in_bracket[in_bracket["team"].str.lower() == norm.lower()]
+            return int(rm.iloc[0].get("seed", 0) or 0) if not rm.empty else 0
+
+        def _live_get_flags(team_name):
+            norm = _BRACKET_NORM.get(team_name, team_name)
+            rm = in_bracket[in_bracket["team"].str.lower() == norm.lower()]
+            if not rm.empty:
+                r = rm.iloc[0]
+                flags = [fc.replace("_", " ").title()
+                         for fc in ["fraud_favorite", "cinderella", "clutch_score", "hot"]
+                         if r.get(fc)]
+                return " | ".join(flags)
+            return ""
+
+        if not all_games:
+            st.info("🏀 No tournament games right now. Games appear at tipoff (March 20 – April 7, 2026).")
         else:
-            # ── LIVE GAMES ────────────────────────────────────────────────────
+            # ── LIVE NOW ──────────────────────────────────────────────────────
             if live_now:
-                st.markdown(f'<div class="section-header">🔴 LIVE NOW — {len(live_now)} game(s)</div>', unsafe_allow_html=True)
+                st.markdown(f'<div class="section-header">🔴 LIVE — {len(live_now)} game(s)</div>', unsafe_allow_html=True)
                 for g in live_now:
                     t1 = g["team1"]; t2 = g["team2"]
                     sd = t1["score"] - t2["score"]
                     pregame_p, s1, s2 = model_pregame_prob(t1["name"], t2["name"], in_bracket)
                     p1, p2 = live_win_prob(pregame_p, sd, g["period"], g["clock"])
-
-                    # Win probability bar color
-                    lead_team = t1["name"] if sd >= 0 else t2["name"]
-                    lead_p    = max(p1, p2)
-                    bar_col   = "#4ade80" if lead_p >= 0.7 else "#f59e0b" if lead_p >= 0.55 else "#94a3b8"
-
-                    period_str = f"{'1st' if g['period']==1 else '2nd' if g['period']==2 else 'OT'} · {g['clock']}"
-
+                    lead_p  = max(p1, p2)
+                    bar_col = "#4ade80" if lead_p >= 0.7 else "#f59e0b" if lead_p >= 0.55 else "#94a3b8"
+                    period_str = ("1st" if g["period"] == 1 else "2nd" if g["period"] == 2 else "OT") + " · " + g["clock"]
+                    src = g.get("source", "ESPN")
                     with st.expander(
                         f"🔴 {t1['name']} {t1['score']} — {t2['score']} {t2['name']}  |  {period_str}",
                         expanded=True
                     ):
-                        lcol1, lcol2 = st.columns(2)
-                        for col, team, p, my_score, opp_score in [
-                            (lcol1, t1, p1, s1, s2),
-                            (lcol2, t2, p2, s2, s1),
-                        ]:
+                        lc1, lc2 = st.columns(2)
+                        for col, team, p, cs in [(lc1, t1, p1, s1), (lc2, t2, p2, s2)]:
                             with col:
-                                is_leader = (team["score"] >= (t2["score"] if team is t1 else t1["score"]))
-                                border_c = "#f97316" if is_leader else "#374151"
+                                is_lead = team["score"] >= (t2["score"] if team is t1 else t1["score"])
                                 st.markdown(
-                                    f'<div style="background:#131820;border:2px solid {border_c};border-radius:8px;padding:10px">'
-                                    f'<div style="font-size:1.1rem;font-weight:800;color:#f1f5f9">{team["name"]}</div>'
-                                    f'<div style="font-size:2.5rem;font-weight:900;color:{"#4ade80" if is_leader else "#f1f5f9"}">{team["score"]}</div>'
-                                    f'<div style="color:#94a3b8;font-size:0.78rem">{team["record"]}</div>'
-                                    f'<div style="margin-top:8px">'
-                                    f'<div style="background:#2d3748;border-radius:4px;height:8px">'
-                                    f'<div style="width:{int(p*100)}%;background:{bar_col};height:8px;border-radius:4px"></div></div>'
-                                    f'<div style="color:{bar_col};font-weight:700;font-size:1.05rem;margin-top:3px">'
-                                    f'{p*100:.0f}% live win prob</div>'
-                                    f'<small style="color:#64748b">Pre-game model score: {my_score:.1f} · '
-                                    f'{american_line(p)} live line</small>'
-                                    f'</div></div>',
-                                    unsafe_allow_html=True)
+                                    _team_card_html(
+                                        team["name"], str(team["score"]), team["record"],
+                                        "Model score: " + f"{cs:.1f}",
+                                        border="#f97316" if is_lead else "#374151",
+                                        score_color="#4ade80" if is_lead else "#f1f5f9",
+                                    )
+                                    + _prob_bar_html(p, bar_col)
+                                    + f'<div style="color:#64748b;font-size:0.73rem">{american_line(p)} live line</div>',
+                                    unsafe_allow_html=True,
+                                )
+                                if st.button("🔍 Deep Dive", key=f"live_dd_{g['event_id']}_{team['name']}", use_container_width=True):
+                                    st.session_state["team_selectbox"] = team["name"]
+                                    st.session_state.dive_team = team["name"]
+                                    st.rerun()
 
-                        # Play-by-play + momentum
                         plays, momentum = fetch_play_by_play(g["event_id"])
                         if momentum:
-                            st.markdown(f'<div style="background:#1a2a1a;border-left:3px solid #16a34a;padding:6px 10px;border-radius:4px;margin-top:6px;color:#d1fae5;font-weight:700">{momentum}</div>', unsafe_allow_html=True)
+                            st.markdown(
+                                f'<div style="background:#1a2a1a;border-left:3px solid #16a34a;padding:6px 10px;'
+                                f'border-radius:4px;margin-top:6px;color:#d1fae5;font-weight:700">{momentum}</div>',
+                                unsafe_allow_html=True)
                         if plays:
                             st.markdown('<small style="color:#64748b">Recent plays:</small>', unsafe_allow_html=True)
                             for play_txt in plays[:5]:
-                                st.markdown(f'<div style="color:#94a3b8;font-size:0.78rem;padding:2px 0">• {play_txt}</div>', unsafe_allow_html=True)
+                                st.markdown(f'<div style="color:#94a3b8;font-size:0.78rem">• {play_txt}</div>', unsafe_allow_html=True)
 
-                        # Model note
-                        model_pick = t1["name"] if pregame_p >= 0.5 else t2["name"]
-                        model_conf = max(pregame_p, 1-pregame_p)
-                        agreement  = "✅ Aligns" if (p1 >= 0.5) == (pregame_p >= 0.5) else "⚠️ Diverging"
+                        mpick = t1["name"] if pregame_p >= 0.5 else t2["name"]
+                        mconf = max(pregame_p, 1 - pregame_p)
+                        agree = "✅ Aligns" if (p1 >= 0.5) == (pregame_p >= 0.5) else "⚠️ Diverging"
                         st.markdown(
-                            f'<small style="color:#94a3b8">📊 Model pre-game pick: <strong style="color:#f1f5f9">{model_pick}</strong>'
-                            f' ({model_conf*100:.0f}% pre-game) — {agreement} from live state</small>',
+                            f'<small style="color:#94a3b8">📊 Pre-game pick: <strong style="color:#f1f5f9">{mpick}</strong>'
+                            f' ({mconf*100:.0f}%) — {agree} · Source: {src}</small>',
                             unsafe_allow_html=True)
 
-            # ── RECENTLY FINISHED ─────────────────────────────────────────────
+            # ── FINAL SCORES ──────────────────────────────────────────────────
             if recent_fin:
                 st.markdown("---")
                 st.markdown('<div class="section-header">✅ Final Scores</div>', unsafe_allow_html=True)
-
-                # Helper functions defined once, used inside the loop below
-                def _live_get_seed(team_name):
-                    norm = _BRACKET_NORM.get(team_name, team_name)
-                    rm = in_bracket[in_bracket["team"].str.lower() == norm.lower()]
-                    if not rm.empty:
-                        return int(rm.iloc[0].get("seed", 0) or 0)
-                    return 0
-
-                def _live_get_flags(team_name):
-                    norm = _BRACKET_NORM.get(team_name, team_name)
-                    rm = in_bracket[in_bracket["team"].str.lower() == norm.lower()]
-                    if not rm.empty:
-                        r = rm.iloc[0]
-                        flags = [fc.replace("_", " ").title()
-                                 for fc in ["fraud_favorite", "cinderella", "clutch_score", "hot"]
-                                 if r.get(fc)]
-                        return " | ".join(flags)
-                    return ""
-
-                for g in recent_fin[:8]:
+                for g in recent_fin:
                     t1 = g["team1"]; t2 = g["team2"]
                     winner = t1 if t1["score"] > t2["score"] else t2
                     loser  = t2 if t1["score"] > t2["score"] else t1
                     pregame_p, s1, s2 = model_pregame_prob(t1["name"], t2["name"], in_bracket)
                     model_got_it = (pregame_p >= 0.5) == (t1["score"] > t2["score"])
-                    verdict = "✅ Model correct" if model_got_it else "❌ Upset — model wrong"
-                    model_fav = t1["name"] if pregame_p >= 0.5 else t2["name"]
-                    model_fav_p = max(pregame_p, 1 - pregame_p)
+                    model_fav    = t1["name"] if pregame_p >= 0.5 else t2["name"]
+                    model_fav_p  = max(pregame_p, 1 - pregame_p)
+                    verdict      = "✅ Correct" if model_got_it else "❌ Upset"
+                    verdict_icon = "✅" if model_got_it else "❌"
                     with st.expander(
-                        f"{'✅' if model_got_it else '❌'} {winner['name']} {winner['score']} def. {loser['name']} {loser['score']}  |  {verdict}",
+                        f"{verdict_icon} {winner['name']} {winner['score']} def. {loser['name']} {loser['score']}  |  {verdict}",
                         expanded=False
                     ):
                         fc1, fc2 = st.columns(2)
-                        for col, team, score, is_winner_flag in [
-                            (fc1, t1, t1["score"], t1["score"] > t2["score"]),
-                            (fc2, t2, t2["score"], t2["score"] > t1["score"])
+                        for col, team, cs, is_win in [
+                            (fc1, t1, s1, t1["score"] > t2["score"]),
+                            (fc2, t2, s2, t2["score"] > t1["score"]),
                         ]:
                             with col:
-                                cs = s1 if team is t1 else s2
-                                bdr = "#4ade80" if is_winner_flag else "#374151"
                                 st.markdown(
-                                    f'<div style="background:#131820;border:2px solid {bdr};border-radius:8px;padding:10px">'
-                                    f'<div style="font-size:1.1rem;font-weight:800;color:#f1f5f9">{team["name"]}</div>'
-                                    f'<div style="font-size:2rem;font-weight:900;color:{"#4ade80" if is_winner_flag else "#f1f5f9"}">{score}</div>'
-                                    f'<div style="color:#94a3b8;font-size:0.78rem">{team.get("record","")}</div>'
-                                    f'<div style="color:#64748b;font-size:0.78rem;margin-top:4px">Model score: {cs:.1f}</div>'
-                                    f'</div>', unsafe_allow_html=True)
-                                tname = team["name"]
-                                if st.button(f"🔍 {tname} Deep Dive", key=f"fin_dd_{g['event_id']}_{tname}", use_container_width=True):
-                                    st.session_state["team_selectbox"] = tname
-                                    st.session_state.dive_team = tname
+                                    _team_card_html(
+                                        team["name"], str(team["score"]), team.get("record", ""),
+                                        "Model score: " + f"{cs:.1f}",
+                                        border="#4ade80" if is_win else "#374151",
+                                        score_color="#4ade80" if is_win else "#f1f5f9",
+                                    ),
+                                    unsafe_allow_html=True)
+                                if st.button("🔍 Deep Dive", key=f"fin_dd_{g['event_id']}_{team['name']}", use_container_width=True):
+                                    st.session_state["team_selectbox"] = team["name"]
+                                    st.session_state.dive_team = team["name"]
                                     st.rerun()
+
+                        st.markdown(
+                            f'<div style="background:#1e293b;border-radius:6px;padding:8px 12px;font-size:0.85rem">'
+                            f'📊 Statlasberg: <strong style="color:#f1f5f9">{model_fav}</strong>'
+                            f' ({model_fav_p*100:.0f}%) — {verdict}</div>',
+                            unsafe_allow_html=True)
+
                         insight = style_matchup_insight_by_name(t1["name"], t2["name"], in_bracket)
                         if insight:
-                            st.markdown(f'<div style="background:#1a2a1a;border-left:3px solid #16a34a;border-radius:4px;padding:6px 10px;margin:8px 0;color:#d1fae5;font-size:0.82rem">💡 Pre-game model insight: {insight}</div>', unsafe_allow_html=True)
-                        st.markdown(
-                            f'<div style="background:#1e293b;border-radius:6px;padding:8px 12px;margin-top:6px;font-size:0.85rem">'
-                            f'📊 Statlasberg pre-game pick: <strong style="color:#f1f5f9">{model_fav}</strong> '
-                            f'({model_fav_p*100:.0f}%) — {verdict}'
-                            f'</div>', unsafe_allow_html=True)
+                            st.markdown(
+                                f'<div style="background:#1a2a1a;border-left:3px solid #16a34a;border-radius:4px;'
+                                f'padding:6px 10px;color:#d1fae5;font-size:0.82rem;margin-top:6px">💡 {insight}</div>',
+                                unsafe_allow_html=True)
 
-                        # ── Instant recap with real box score ─────────────────
+                        # Instant recap
                         box = fetch_game_box_score(g["event_id"])
-                        w_name = winner["name"]; l_name = loser["name"]
-                        w_seed_live = _live_get_seed(w_name)
-                        l_seed_live = _live_get_seed(l_name)
-
-                        # Determine which slot is t1 vs t2 in ESPN response
                         t1_is_winner = (t1["score"] > t2["score"])
                         row_dict = {
                             "t1": t1["name"], "t2": t2["name"],
                             "t1_score": t1["score"], "t2_score": t2["score"],
-                            "winner": w_name, "loser": l_name,
-                            "model_pick": model_fav,
-                            "model_conf": model_fav_p,
+                            "winner": winner["name"], "loser": loser["name"],
+                            "model_pick": model_fav, "model_conf": model_fav_p,
                             "correct": model_got_it,
-                            "winner_seed": w_seed_live, "loser_seed": l_seed_live,
-                            "winner_flags": _live_get_flags(w_name),
-                            "loser_flags": _live_get_flags(l_name),
+                            "winner_seed": _live_get_seed(winner["name"]),
+                            "loser_seed":  _live_get_seed(loser["name"]),
+                            "winner_flags": _live_get_flags(winner["name"]),
+                            "loser_flags":  _live_get_flags(loser["name"]),
                         }
-                        # Attach box score fields
                         for k, v in box.items():
                             row_dict[k] = v
                         narrative = game_narrative(row_dict, in_bracket)
                         if narrative:
+                            border_c = "#4ade80" if model_got_it else "#f87171"
                             st.markdown(
-                                f'<div style="background:#0f1f2e;border-left:3px solid {"#4ade80" if model_got_it else "#f87171"};'
+                                f'<div style="background:#0f1f2e;border-left:3px solid {border_c};'
                                 f'border-radius:4px;padding:8px 12px;margin-top:8px;color:#e2e8f0;font-size:0.82rem">'
                                 f'<div style="font-weight:700;color:#94a3b8;margin-bottom:4px">📋 Statlas Recap</div>'
-                                f'{narrative.replace(chr(10), "<br>")}'
-                                f'</div>', unsafe_allow_html=True)
+                                f'{narrative.replace(chr(10), "<br>")}</div>',
+                                unsafe_allow_html=True)
 
-                        # Show key box score stats if available
-                        if box and any(box.get(f"t{i}_{s}") for i in [1,2] for s in ["fg_pct","rebounds","turnovers"]):
+                        if box and any(box.get(f"t{i}_{s}") for i in [1, 2] for s in ["fg_pct", "rebounds", "turnovers"]):
                             w_pfx = "t1_" if t1_is_winner else "t2_"
                             l_pfx = "t2_" if t1_is_winner else "t1_"
-                            stat_rows = []
-                            for stat_key, label in [
-                                ("fg_pct", "FG%"), ("fg3_pct", "3PT%"),
-                                ("rebounds", "Rebounds"), ("turnovers", "Turnovers"),
-                                ("assists", "Assists"),
-                            ]:
-                                wv = box.get(f"{w_pfx}{stat_key}", "")
-                                lv = box.get(f"{l_pfx}{stat_key}", "")
-                                if wv or lv:
-                                    stat_rows.append({"Stat": label, w_name: wv, l_name: lv})
+                            stat_rows = [
+                                {"Stat": lbl, winner["name"]: box.get(w_pfx + sk, ""), loser["name"]: box.get(l_pfx + sk, "")}
+                                for sk, lbl in [("fg_pct", "FG%"), ("fg3_pct", "3PT%"), ("rebounds", "Reb"), ("turnovers", "TO"), ("assists", "AST")]
+                                if box.get(w_pfx + sk) or box.get(l_pfx + sk)
+                            ]
                             if stat_rows:
-                                st.dataframe(pd.DataFrame(stat_rows).set_index("Stat"),
-                                             use_container_width=True, hide_index=False)
+                                st.dataframe(pd.DataFrame(stat_rows).set_index("Stat"), use_container_width=True, hide_index=False)
 
-            # ── UPCOMING ─────────────────────────────────────────────────────
+            # ── UPCOMING ──────────────────────────────────────────────────────
             if upcoming:
                 st.markdown("---")
-                st.markdown('<div class="section-header">🕐 Upcoming Games — Pre-Game Model Lines</div>', unsafe_allow_html=True)
-                for g in upcoming[:8]:
+                st.markdown('<div class="section-header">🕐 Upcoming — Pre-Game Lines</div>', unsafe_allow_html=True)
+                for g in upcoming:
                     t1 = g["team1"]; t2 = g["team2"]
                     pregame_p, s1, s2 = model_pregame_prob(t1["name"], t2["name"], in_bracket)
                     fav_name = t1["name"] if pregame_p >= 0.5 else t2["name"]
-                    fav_p = max(pregame_p, 1 - pregame_p)
+                    fav_p    = max(pregame_p, 1 - pregame_p)
                     with st.expander(
-                        f"🕐 {t1['name']} vs {t2['name']}  —  Model pick: {fav_name} ({fav_p*100:.0f}%)",
+                        f"🕐 {t1['name']} vs {t2['name']}  —  {fav_name} ({fav_p*100:.0f}%)",
                         expanded=False
                     ):
                         uc1, uc2 = st.columns(2)
-                        for col, team, cs, p in [(uc1, t1, s1, pregame_p), (uc2, t2, s2, 1-pregame_p)]:
+                        for col, team, cs, p in [(uc1, t1, s1, pregame_p), (uc2, t2, s2, 1 - pregame_p)]:
                             with col:
-                                is_fav = team["name"] == fav_name
+                                is_fav  = team["name"] == fav_name
                                 bar_col = "#4ade80" if is_fav else "#64748b"
                                 st.markdown(
-                                    f'<div style="background:#131820;border:2px solid {"#f97316" if is_fav else "#374151"};border-radius:8px;padding:10px">'
-                                    f'<div style="font-size:1rem;font-weight:800;color:#f1f5f9">{team["name"]} {"⭐ Model Pick" if is_fav else ""}</div>'
-                                    f'<div style="background:#1e293b;border-radius:3px;height:6px;margin:6px 0">'
-                                    f'<div style="width:{int(p*100)}%;background:{bar_col};height:6px;border-radius:3px"></div></div>'
-                                    f'<div style="color:{bar_col};font-weight:700;font-size:1rem">{p*100:.0f}% · {american_line(p)}</div>'
-                                    f'<div style="color:#64748b;font-size:0.78rem;margin-top:4px">Model score: {cs:.1f}</div>'
-                                    f'</div>', unsafe_allow_html=True)
-                                tname = team["name"]
-                                if st.button(f"🔍 {tname} Deep Dive", key=f"up_dd_{g['event_id']}_{tname}", use_container_width=True):
-                                    st.session_state["team_selectbox"] = tname
-                                    st.session_state.dive_team = tname
+                                    _team_card_html(
+                                        team["name"], american_line(p), team.get("record", ""),
+                                        f"{p*100:.0f}% win prob  ·  Score: {cs:.1f}",
+                                        border="#f97316" if is_fav else "#374151",
+                                        badge="⭐ Pick" if is_fav else "",
+                                    )
+                                    + _prob_bar_html(p, bar_col),
+                                    unsafe_allow_html=True)
+                                if st.button("🔍 Deep Dive", key=f"up_dd_{g['event_id']}_{team['name']}", use_container_width=True):
+                                    st.session_state["team_selectbox"] = team["name"]
+                                    st.session_state.dive_team = team["name"]
                                     st.rerun()
+
                         insight = style_matchup_insight_by_name(t1["name"], t2["name"], in_bracket)
                         if insight:
-                            st.markdown(f'<div style="background:#1a2a1a;border-left:3px solid #16a34a;border-radius:4px;padding:6px 10px;margin:8px 0;color:#d1fae5;font-size:0.82rem">💡 {insight}</div>', unsafe_allow_html=True)
+                            st.markdown(
+                                f'<div style="background:#1a2a1a;border-left:3px solid #16a34a;border-radius:4px;'
+                                f'padding:6px 10px;color:#d1fae5;font-size:0.82rem">💡 {insight}</div>',
+                                unsafe_allow_html=True)
 
-        st.markdown("---")
-        st.caption("Data: ESPN public API · Refresh rate: manual or 60s auto · In-game probability blends model pre-game score (dominates early) with live score differential (dominates late). Model principles stay constant — late-game score doesn't override the model, it updates it.")
+        st.caption("Sources: ESPN + NCAA.com official · In-game probability blends pre-game model with live score differential.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3961,124 +3958,9 @@ def statlasberg_qa(q, bkt_df, s16, e8, ff, champion, champs_df, results_list=Non
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TAB 8 — ASK STATLASBERG  (Q&A + Model Comparison)
+# TAB 7 — MODEL ACCURACY  (Historical Backtest 2015–2025)
 # ─────────────────────────────────────────────────────────────────────────────
-with tab8:
-    st.markdown('<div class="section-header">📊 Model Comparison</div>', unsafe_allow_html=True)
-    st.caption("How does Statlasberg compare to KenPom-proxy and seed baseline? Disagreements often reveal where the model sees value.")
-
-    # ── Model Comparison ──────────────────────────────────────────────────────
-    with st.expander("📊 Model Comparison — Statlasberg vs KenPom-Proxy vs Seed Baseline", expanded=True):
-        if len(in_bracket) > 0:
-            comp_df = in_bracket.copy()
-
-            # Statlasberg rank: by contender_score descending
-            comp_df["statl_rank"] = comp_df["contender_score"].rank(ascending=False, method="min").astype(int)
-
-            # KenPom-proxy: rank by adj_margin if available, else adj_offense - adj_defense
-            if "adj_margin" in comp_df.columns and comp_df["adj_margin"].notna().any():
-                comp_df["kp_rank"] = comp_df["adj_margin"].rank(ascending=False, method="min").fillna(99).astype(int)
-                kp_label = "KenPom-Proxy\n(adj_margin rank)"
-            elif "adj_offense" in comp_df.columns and "adj_defense" in comp_df.columns:
-                comp_df["adj_net"] = comp_df["adj_offense"].fillna(0) - comp_df["adj_defense"].fillna(0)
-                comp_df["kp_rank"] = comp_df["adj_net"].rank(ascending=False, method="min").fillna(99).astype(int)
-                kp_label = "KenPom-Proxy\n(adj net rank)"
-            else:
-                comp_df["kp_rank"] = comp_df["seed"].astype(int)
-                kp_label = "KenPom-Proxy\n(seed — no adj data)"
-
-            # Seed baseline rank: within-region seed (1 best per region)
-            comp_df["seed_rank"] = comp_df.groupby("region")["seed"].rank(method="min").astype(int)
-
-            # Compute Final Four for each model
-            # Statlasberg FF already in sim_ff
-            # KenPom-proxy FF: top team by kp_rank in each region
-            kp_ff = []
-            for reg in comp_df["region"].unique():
-                reg_df = comp_df[comp_df["region"] == reg].sort_values("kp_rank")
-                if len(reg_df):
-                    kp_ff.append(reg_df.iloc[0]["team"])
-            # Seed baseline FF: #1 seed in each region
-            seed_ff = []
-            for reg in comp_df["region"].unique():
-                reg_df = comp_df[(comp_df["region"] == reg) & (comp_df["seed"] == 1)]
-                if len(reg_df):
-                    seed_ff.append(reg_df.iloc[0]["team"])
-
-            # ── Final Four Comparison ─────────────────────────────────────────
-            st.markdown("#### 🏀 Final Four Predictions")
-            ff_col1, ff_col2, ff_col3 = st.columns(3)
-            with ff_col1:
-                st.markdown("**🤖 Statlasberg**")
-                for t in (sim_ff or []):
-                    row = comp_df[comp_df["team"] == t]
-                    seed_str = f" (#{int(row.iloc[0]['seed'])})" if len(row) and pd.notna(row.iloc[0].get('seed')) else ""
-                    st.markdown(f"• {t}{seed_str}")
-                st.markdown(f"**Champion:** {sim_champion}")
-            with ff_col2:
-                st.markdown(f"**📊 {kp_label.split(chr(10))[0]}**")
-                for t in kp_ff:
-                    row = comp_df[comp_df["team"] == t]
-                    seed_str = f" (#{int(row.iloc[0]['seed'])})" if len(row) and pd.notna(row.iloc[0].get('seed')) else ""
-                    st.markdown(f"• {t}{seed_str}")
-                st.markdown(f"**Champion:** {kp_ff[0] if kp_ff else '—'}")
-            with ff_col3:
-                st.markdown("**🎲 Seed Baseline (#1 seeds)**")
-                for t in seed_ff:
-                    st.markdown(f"• {t} (#1)")
-                st.markdown(f"**Champion:** {seed_ff[0] if seed_ff else '—'}")
-
-            st.markdown("---")
-
-            # ── Rankings comparison table ─────────────────────────────────────
-            st.markdown("#### 📋 Top 20 Teams — Cross-Model Rankings")
-            top20 = comp_df.sort_values("statl_rank").head(20)[
-                ["team", "region", "seed", "statl_rank", "kp_rank", "contender_score", "sim_round"]
-            ].copy()
-            top20.columns = ["Team", "Region", "Seed", "Statlasberg Rank", kp_label.replace("\n", " "), "Score", "Predicted Round"]
-
-            # Color-code rank differences
-            def highlight_gap(row):
-                try:
-                    gap = int(row["Statlasberg Rank"]) - int(row[kp_label.replace(chr(10), " ")])
-                    if gap <= -5:   return [""] * len(row) + []
-                except Exception:
-                    pass
-                return [""] * len(row)
-
-            st.dataframe(
-                top20.set_index("Team"),
-                use_container_width=True,
-                column_config={
-                    "Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%.1f"),
-                    "Statlasberg Rank": st.column_config.NumberColumn("Statl. Rank", format="%d"),
-                    kp_label.replace("\n", " "): st.column_config.NumberColumn("KP-Proxy Rank", format="%d"),
-                }
-            )
-
-            # ── Big disagreements ─────────────────────────────────────────────
-            comp_df["rank_gap"] = (comp_df["statl_rank"] - comp_df["kp_rank"]).abs()
-            disagree = comp_df[comp_df["rank_gap"] >= 8].sort_values("rank_gap", ascending=False).head(8)
-            if len(disagree):
-                st.markdown("#### ⚡ Biggest Disagreements Between Models")
-                for _, row in disagree.iterrows():
-                    gap_dir = "📈 Statlasberg **higher** on" if row["statl_rank"] < row["kp_rank"] else "📉 Statlasberg **lower** on"
-                    st.markdown(
-                        f'<div style="background:#1e293b;border-radius:6px;padding:8px 12px;margin:4px 0;font-size:0.85rem">'
-                        f'{gap_dir} <strong style="color:#f1f5f9">{row["team"]}</strong> '
-                        f'<span style="color:#94a3b8">(#{int(row["seed"]) if pd.notna(row.get("seed")) else "?"} seed)</span> — '
-                        f'Statl. rank <strong style="color:#4ade80">#{int(row["statl_rank"])}</strong> · '
-                        f'KP-Proxy rank <strong style="color:#f87171">#{int(row["kp_rank"])}</strong>'
-                        f'</div>',
-                        unsafe_allow_html=True)
-        else:
-            st.info("Load bracket data to see model comparisons.")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TAB 9 — MODEL ACCURACY  (Historical Backtest 2015–2025)
-# ─────────────────────────────────────────────────────────────────────────────
-with tab9:
+with tab7:
     st.markdown('<div class="section-header">📈 Model Accuracy — Historical Backtest (2015–2025)</div>',
                 unsafe_allow_html=True)
     st.caption("How well does Statlasberg's scoring model rank actual NCAA champions? "
@@ -4259,9 +4141,9 @@ with tab9:
             st.info("No valid backtest data available. Run the backtest first.")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TAB 10 — RECAP  (persistent record + per-game narratives + round browser)
+# TAB 8 — RECAP  (persistent record + per-game narratives + round browser)
 # ─────────────────────────────────────────────────────────────────────────────
-with tab10:
+with tab8:
     st.markdown('<div class="section-header">📋 Statlasberg — 2026 Tournament Recap</div>', unsafe_allow_html=True)
     st.caption("Per-game model breakdown · Persistent record · Browse by round · Powered by ESPN data")
 
