@@ -2506,10 +2506,12 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
     if os.path.exists(_RESULTS_CSV):
         try:
             old_df = pd.read_csv(_RESULTS_CSV)
-            # Normalize any legacy round labels (e.g. raw ESPN headline) to FF4
-            if "round" in old_df.columns and "date" in old_df.columns:
-                mask = old_df["date"].astype(str).isin(["20260319", "20260320"]) & \
-                       ~old_df["round"].isin(["FF4", "R64", "R32", "S16", "E8", "FF", "Championship"])
+            # Normalize legacy round labels: rows whose round contains "first four"
+            # (raw ESPN headline) should be "FF4"
+            known_rounds = {"FF4", "R64", "R32", "S16", "E8", "FF", "Championship"}
+            if "round" in old_df.columns:
+                mask = ~old_df["round"].isin(known_rounds) & \
+                       old_df["round"].str.lower().str.contains("first four", na=False)
                 old_df.loc[mask, "round"] = "FF4"
             existing_ids = set(str(x) for x in old_df["event_id"].tolist())
             existing_rows = old_df.to_dict("records")
@@ -2531,13 +2533,13 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
             s1 = score_lkp.get(t1, 50); s2 = score_lkp.get(t2, 50)
             model_winner = t1 if win_prob_sigmoid(s1, s2) >= 0.5 else t2
             model_loser  = t2 if model_winner == t1 else t1
-            # Assign round: First Four dates get "FF4", others fall back to headline
-            game_date = str(g.get("date", ""))
-            headline  = g.get("headline", "").lower()
-            if game_date in ("20260319", "20260320") or "first four" in headline:
+            # Use ESPN headline to detect First Four — don't use dates alone
+            # because March 20 has both First Four AND R64 games
+            headline = g.get("headline", "")
+            if "first four" in headline.lower():
                 rnd = "FF4"
             else:
-                rnd = g.get("headline", "Tournament")
+                rnd = headline or "Tournament"
             region = ""
         correct    = (winner == model_winner)
         model_conf = win_prob_sigmoid(score_lkp.get(model_winner, 50), score_lkp.get(model_loser, 50))
@@ -4192,6 +4194,42 @@ with tab10:
             ]) +
             f'</div></div>', unsafe_allow_html=True)
 
+        # ── CONFIDENCE METER ───────────────────────────────────────────────────
+        conf_buckets = [
+            (0.5, 0.6, "50–60%"), (0.6, 0.7, "60–70%"),
+            (0.7, 0.8, "70–80%"), (0.8, 1.01, "80%+"),
+        ]
+        # Ensure model_conf is numeric
+        recap_df["model_conf"] = pd.to_numeric(recap_df["model_conf"], errors="coerce").fillna(0.5)
+        recap_df["correct"]    = recap_df["correct"].map(lambda x: str(x).strip().lower() in ("true","1","yes")) \
+                                  if recap_df["correct"].dtype == object else recap_df["correct"].astype(bool)
+        conf_cols = st.columns(4)
+        for ci, (lo, hi, label) in enumerate(conf_buckets):
+            bdf = recap_df[(recap_df["model_conf"] >= lo) & (recap_df["model_conf"] < hi)]
+            n = len(bdf)
+            if n == 0:
+                conf_cols[ci].markdown(
+                    f'<div style="background:#131820;border:1px solid #1e293b;border-radius:8px;padding:12px;text-align:center">'
+                    f'<div style="color:#475569;font-size:0.72rem;font-weight:700">{label} confidence</div>'
+                    f'<div style="color:#475569;font-size:1.6rem;font-weight:900">—</div>'
+                    f'<div style="color:#475569;font-size:0.68rem">no games yet</div>'
+                    f'</div>', unsafe_allow_html=True)
+            else:
+                w = int(bdf["correct"].sum()); l = n - w
+                actual = w / n * 100
+                mid = (lo + hi) / 2 * 100
+                diff = actual - mid
+                color = "#4ade80" if diff >= -5 else "#fbbf24" if diff >= -15 else "#f87171"
+                border = "#4ade80" if diff >= -5 else "#fbbf24" if diff >= -15 else "#f87171"
+                conf_cols[ci].markdown(
+                    f'<div style="background:#131820;border:1px solid {border};border-radius:8px;padding:12px;text-align:center">'
+                    f'<div style="color:#94a3b8;font-size:0.72rem;font-weight:700">{label} confidence</div>'
+                    f'<div style="color:{color};font-size:1.6rem;font-weight:900">{actual:.0f}%</div>'
+                    f'<div style="color:#64748b;font-size:0.72rem">{w}–{l} · {n} games</div>'
+                    f'<div style="background:#1e293b;border-radius:3px;height:5px;margin-top:6px">'
+                    f'<div style="width:{actual:.0f}%;background:{color};height:5px;border-radius:3px"></div></div>'
+                    f'</div>', unsafe_allow_html=True)
+
         # ── SECTION B: Browse by Round ─────────────────────────────────────────
         played_rounds = [r for r in _RND_ORDER if r in recap_df["round"].values]
         round_tab_labels = [_RND_LABELS.get(r, r) for r in played_rounds]
@@ -4348,29 +4386,6 @@ with tab10:
                     f'<div style="width:{bar_w}%;background:{bc};height:5px;border-radius:3px"></div></div>'
                     f'</div>', unsafe_allow_html=True)
 
-            # Calibration
-            st.markdown("---")
-            st.markdown("**Confidence Calibration**")
-            buckets = [(0.5, 0.6, "50–60%"), (0.6, 0.7, "60–70%"), (0.7, 0.8, "70–80%"), (0.8, 1.01, "80%+")]
-            cal_cols = st.columns(4)
-            for ci, (lo, hi, label) in enumerate(buckets):
-                bdf = recap_df[(recap_df["model_conf"] >= lo) & (recap_df["model_conf"] < hi)]
-                if len(bdf) == 0:
-                    cal_cols[ci].markdown(
-                        f'<div style="background:#131820;border-radius:6px;padding:8px;text-align:center">'
-                        f'<div style="color:#475569;font-size:0.72rem">{label}</div>'
-                        f'<div style="color:#475569;font-size:1.1rem">—</div>'
-                        f'<div style="color:#475569;font-size:0.68rem">no games</div>'
-                        f'</div>', unsafe_allow_html=True)
-                else:
-                    actual = bdf["correct"].mean() * 100
-                    color = "#4ade80" if abs(actual - (lo + hi) / 2 * 100) < 15 else "#fbbf24"
-                    cal_cols[ci].markdown(
-                        f'<div style="background:#131820;border-radius:6px;padding:8px;text-align:center">'
-                        f'<div style="color:#94a3b8;font-size:0.72rem">{label}</div>'
-                        f'<div style="color:{color};font-size:1.4rem;font-weight:900">{actual:.0f}%</div>'
-                        f'<div style="color:#64748b;font-size:0.68rem">actual · {len(bdf)} games</div>'
-                        f'</div>', unsafe_allow_html=True)
 
         with st.expander("💥 Biggest Misses", expanded=False):
             misses = recap_df[~recap_df["correct"]].sort_values("model_conf", ascending=False).head(5)
