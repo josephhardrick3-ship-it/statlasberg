@@ -2492,101 +2492,114 @@ def game_narrative(row, bkt_df):
                 )
 
         elif margin_tag == "clear":
-            # Clear wins — find the primary driver
             stat_lines = []
             if fg_gap is not None:
-                stat_lines.append(("fg", abs(fg_gap), f"FG% edge ({w_fg:.0f}% vs {l_fg:.0f}%)"))
+                stat_lines.append(("fg", abs(fg_gap), "FG% edge (" + str(int(w_fg)) + "% vs " + str(int(l_fg)) + "%)"))
             if reb_gap is not None and reb_gap >= 4:
-                stat_lines.append(("reb", reb_gap, f"rebounding edge ({int(w_reb)}–{int(l_reb)})"))
+                stat_lines.append(("reb", reb_gap, "rebounding edge (" + str(int(w_reb)) + "-" + str(int(l_reb)) + ")"))
             if to_gap is not None and to_gap >= 3:
-                stat_lines.append(("to", to_gap, f"turnover advantage ({int(w_to)} vs {int(l_to)})"))
+                stat_lines.append(("to", to_gap, "turnover advantage (" + str(int(w_to)) + " vs " + str(int(l_to)) + ")"))
             stat_lines.sort(key=lambda x: x[1], reverse=True)
             if stat_lines:
                 primary = stat_lines[0][2]
+                fallback = stat_lines[-1][2] if len(stat_lines) > 1 else "overall play"
+                kind = "efficiency" if "FG" in primary else "advantage"
+                outcome_read = "the model confidence was grounded in real quality" if correct else "the actual performance outpaced what the model saw pre-game"
                 if fg_gap is not None and fg_gap < 0 and correct:
                     parts.append(
-                        f"{loser} actually shot better ({l_fg:.0f}% vs {w_fg:.0f}%), "
-                        f"but {winner}'s {stat_lines[-1][2] if len(stat_lines)>1 else 'overall play'} "
-                        f"told a different story. The model's pre-game read held up despite the shooting numbers."
+                        loser + " actually shot better (" + str(int(l_fg)) + "% vs " + str(int(w_fg)) + "%), "
+                        "but " + winner + "'s " + fallback + " "
+                        "told a different story. The model pre-game read held up despite the shooting numbers."
                     )
                 else:
                     parts.append(
-                        f"{winner}'s {primary} was the clearest separator — "
-                        f"a {margin}-point tournament win with that kind of {'efficiency' if 'FG' in primary else 'advantage'} "
-                        f"suggests {'the model's confidence was grounded in real quality' if correct else 'the actual performance outpaced what the model saw pre-game'}."
+                        winner + "'s " + primary + " was the clearest separator — "
+                        "a " + str(margin) + "-point tournament win with that kind of " + kind + " "
+                        "suggests " + outcome_read + "."
                     )
             else:
                 parts.append(
-                    f"A {margin}-point win — clear enough to draw signal from, "
-                    f"but no single stat dominated the box score."
+                    "A " + str(margin) + "-point win — clear enough to draw signal from, "
+                    "but no single stat dominated the box score."
                 )
 
         else:  # coin-flip or close
             if fg_gap is not None:
                 if abs(fg_gap) <= 4:
+                    close_read = "The model was right directionally, but the margin says this was anyones game." if correct else "A loss this close does not necessarily mean the models read was wrong."
                     parts.append(
-                        f"Both teams shot similarly ({w_fg:.0f}% vs {l_fg:.0f}%) and it came down to {margin} points — "
-                        f"games this tight often turn on late free throws or a single possession. "
-                        f"{'The model was right directionally, but the margin says this was anyone\'s game.' if correct else 'A loss this close doesn\'t necessarily mean the model\'s read was wrong.'}"
+                        "Both teams shot similarly (" + str(int(w_fg)) + "% vs " + str(int(l_fg)) + "%) and it came down to " + str(margin) + " points — "
+                        "games this tight often turn on late free throws or a single possession. " + close_read
                     )
                 else:
+                    close_read2 = "something beyond shooting efficiency kept this close (turnovers, rebounding, late-game execution)." if correct else "the shooting edge was not enough to convert, which happens in close tournament games."
                     parts.append(
-                        f"{winner} shot {w_fg:.0f}% vs {loser}'s {l_fg:.0f}%, yet it came down to {margin} — "
-                        f"{'something beyond shooting efficiency kept this close (turnovers, rebounding, late-game execution).' if correct else 'the shooting edge wasn\'t enough to convert, which happens in close tournament games.'}"
+                        winner + " shot " + str(int(w_fg)) + "% vs " + loser + "'s " + str(int(l_fg)) + "%, yet it came down to " + str(margin) + " — " + close_read2
                     )
             else:
+                var_read = "Do not over-correct from a close win; the signal is weak." if correct else "Do not over-correct from a close miss; the model principles may still be sound."
                 parts.append(
-                    f"A {margin}-point game — outcomes this close carry high variance. "
-                    f"{'Don\'t over-correct from a close win; the signal is weak.' if correct else 'Don\'t over-correct from a close miss; the model\'s principles may still be sound.'}"
+                    "A " + str(margin) + "-point game — outcomes this close carry high variance. " + var_read
                 )
 
     else:
         # No box score — use pre-game model scores
         if w_cs and l_cs and abs(w_cs - l_cs) >= 5:
             cs_gap = w_cs - l_cs
+            confirmed = "confirmed" if correct else "contradicted"
             parts.append(
-                f"Pre-game Contender Scores: {winner} {w_cs:.0f} vs {loser} {l_cs:.0f} (gap {cs_gap:+.0f}). "
-                f"{'The quality gap translated to the scoreboard.' if correct and margin_tag in ('clear','decisive') else 'Pre-game metrics suggested a gap — the result {'confirmed' if correct else 'contradicted'} that read.'.format()}"
+                "Pre-game Contender Scores: " + winner + " " + str(int(w_cs)) + " vs " + loser + " " + str(int(l_cs)) + " (gap " + (("+" if cs_gap > 0 else "") + str(int(cs_gap))) + "). "
+                "Pre-game metrics suggested a gap — the result " + confirmed + " that read."
             )
         elif margin_tag in ("coin-flip", "close"):
-            parts.append(
-                f"A {margin}-point result with no box score yet — "
-                f"{'too close to read strong signal into.' if correct else 'close enough that this could go either way on a different night.'}"
-            )
+            close_no_box = "too close to read strong signal into." if correct else "close enough that this could go either way on a different night."
+            parts.append("A " + str(margin) + "-point result with no box score yet — " + close_no_box)
 
     # ── Line 3: what the model takes away ─────────────────────────────────────
     if margin_tag in ("clear", "decisive"):
         if correct:
             if conf >= 75:
                 parts.append(
-                    f"High-confidence call ({conf:.0f}%) that held up by {margin} — "
-                    f"when the model is this sure and the margin is this wide, it's a signal the underlying quality metrics are reading the matchup correctly."
+                    "High-confidence call (" + str(int(conf)) + "%) that held up by " + str(margin) + " — "
+                    "when the model is this sure and the margin is this wide, it signals the underlying quality metrics are reading the matchup correctly."
                 )
             else:
                 parts.append(
-                    f"Model was only {conf:.0f}% here but won by {margin} — "
-                    f"the actual performance was more one-sided than the model expected. Worth checking whether this team's metrics are underrated."
+                    "Model was only " + str(int(conf)) + "% here but won by " + str(margin) + " — "
+                    "the actual performance was more one-sided than expected. Worth checking whether this team's metrics are underrated."
                 )
         else:
-            # Missed on a clear/decisive game — real learning
             if conf >= 75:
+                round_note = "the model may be overweighting seed or pre-game metrics in this round" if rnd in ("R64", "FF4") else "teams that advance to this stage often have qualities that regular-season metrics do not fully capture"
                 parts.append(
-                    f"A {conf:.0f}%-confidence miss by {margin} points is meaningful feedback — "
-                    f"{'the model may be overweighting seed or pre-game metrics in this round' if rnd in ('R64','FF4') else 'teams that advance to this stage often have qualities the regular-season metrics don\'t fully capture'}."
+                    "A " + str(int(conf)) + "%-confidence miss by " + str(margin) + " points is meaningful feedback — " + round_note + "."
                 )
             else:
+                flag_note = "An upset tag on " + loser + " was there pre-tournament." if ("Fraud" in l_flags or "Dangerous" in w_flags) else "This is the kind of game to revisit when reweighting features."
                 parts.append(
-                    f"Missed at {conf:.0f}% confidence and lost by {margin} — "
-                    f"the result wasn't close. {'An upset tag on ' + loser + ' was there pre-tournament.' if 'Fraud' in l_flags or 'Dangerous' in w_flags else 'This is the kind of game to revisit when reweighting features.'}"
+                    "Missed at " + str(int(conf)) + "% confidence and lost by " + str(margin) + " — the result was not close. " + flag_note
                 )
     elif margin_tag in ("coin-flip", "close"):
         if not correct:
             parts.append(
-                f"Lost by {margin} — within the noise floor of tournament basketball. "
-                f"Don't over-correct. A game this tight on a different night could easily flip."
+                "Lost by " + str(margin) + " — within the noise floor of tournament basketball. "
+                "Do not over-correct. A game this tight on a different night could easily flip."
             )
 
     return "\n".join(p for p in parts if p)
+
+
+def _round_from_headline(hl):
+    """Map raw ESPN headline string to a standard round code."""
+    hl = hl.lower()
+    if "first four" in hl:                             return "FF4"
+    if "1st round" in hl or "first round" in hl:       return "R64"
+    if "second round" in hl or "2nd round" in hl:      return "R32"
+    if "sweet 16" in hl:                               return "S16"
+    if "elite 8" in hl:                                return "E8"
+    if "final four" in hl and "first" not in hl:       return "FF"
+    if "championship" in hl:                           return "Championship"
+    return None
 
 
 def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
@@ -2647,32 +2660,24 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
             continue
         t1, t2 = g["t1"], g["t2"]
         winner, loser = g["winner"], g["loser"]
+        # Check headline FIRST — First Four must override any bracket-based label
+        headline = g.get("headline", "").lower()
+        headline_round = _round_from_headline(headline)
+
         model_tuple = model_pick_lkp.get((t1, t2)) or model_pick_lkp.get((t2, t1))
-        if model_tuple:
+        if headline_round == "FF4":
+            # First Four always wins — never let bracket lookup label it R64
+            s1 = score_lkp.get(t1, 50); s2 = score_lkp.get(t2, 50)
+            model_winner = t1 if win_prob_sigmoid(s1, s2) >= 0.5 else t2
+            model_loser  = t2 if model_winner == t1 else t1
+            rnd = "FF4"; region = ""
+        elif model_tuple:
             model_winner, model_loser, rnd, region = model_tuple
         else:
             s1 = score_lkp.get(t1, 50); s2 = score_lkp.get(t2, 50)
             model_winner = t1 if win_prob_sigmoid(s1, s2) >= 0.5 else t2
             model_loser  = t2 if model_winner == t1 else t1
-            # Use ESPN headline to detect First Four — don't use dates alone
-            # because March 20 has both First Four AND R64 games
-            headline = g.get("headline", "").lower()
-            if "first four" in headline:
-                rnd = "FF4"
-            elif "1st round" in headline or "first round" in headline:
-                rnd = "R64"
-            elif "second round" in headline or "2nd round" in headline:
-                rnd = "R32"
-            elif "sweet 16" in headline:
-                rnd = "S16"
-            elif "elite 8" in headline:
-                rnd = "E8"
-            elif "final four" in headline and "first" not in headline:
-                rnd = "FF"
-            elif "championship" in headline:
-                rnd = "Championship"
-            else:
-                rnd = "R64"  # default: unmatched tournament games are most likely R64
+            rnd = headline_round or "R64"
             region = ""
         correct    = (winner == model_winner)
         model_conf = win_prob_sigmoid(score_lkp.get(model_winner, 50), score_lkp.get(model_loser, 50))
