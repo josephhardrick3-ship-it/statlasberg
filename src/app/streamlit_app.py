@@ -2686,6 +2686,26 @@ with tab7:
             if recent_fin:
                 st.markdown("---")
                 st.markdown('<div class="section-header">✅ Final Scores</div>', unsafe_allow_html=True)
+
+                # Helper functions defined once, used inside the loop below
+                def _live_get_seed(team_name):
+                    norm = _BRACKET_NORM.get(team_name, team_name)
+                    rm = in_bracket[in_bracket["team"].str.lower() == norm.lower()]
+                    if not rm.empty:
+                        return int(rm.iloc[0].get("seed", 0) or 0)
+                    return 0
+
+                def _live_get_flags(team_name):
+                    norm = _BRACKET_NORM.get(team_name, team_name)
+                    rm = in_bracket[in_bracket["team"].str.lower() == norm.lower()]
+                    if not rm.empty:
+                        r = rm.iloc[0]
+                        flags = [fc.replace("_", " ").title()
+                                 for fc in ["fraud_favorite", "cinderella", "clutch_score", "hot"]
+                                 if r.get(fc)]
+                        return " | ".join(flags)
+                    return ""
+
                 for g in recent_fin[:8]:
                     t1 = g["team1"]; t2 = g["team2"]
                     winner = t1 if t1["score"] > t2["score"] else t2
@@ -2731,27 +2751,8 @@ with tab7:
                         # ── Instant recap with real box score ─────────────────
                         box = fetch_game_box_score(g["event_id"])
                         w_name = winner["name"]; l_name = loser["name"]
-                        # Find seed info from in_bracket
-                        def _get_seed(team_name):
-                            norm = _BRACKET_NORM.get(team_name, team_name)
-                            row_match = in_bracket[in_bracket["team"].str.lower() == norm.lower()]
-                            if not row_match.empty:
-                                return int(row_match.iloc[0].get("seed", 0) or 0)
-                            return 0
-                        w_seed_live = _get_seed(w_name)
-                        l_seed_live = _get_seed(l_name)
-
-                        # Build flags string for winner/loser
-                        def _get_flags(team_name):
-                            norm = _BRACKET_NORM.get(team_name, team_name)
-                            row_match = in_bracket[in_bracket["team"].str.lower() == norm.lower()]
-                            if not row_match.empty:
-                                r = row_match.iloc[0]
-                                flags = []
-                                for fcol in ["fraud_favorite","cinderella","clutch_score","hot"]:
-                                    if r.get(fcol): flags.append(fcol.replace("_"," ").title())
-                                return " | ".join(flags)
-                            return ""
+                        w_seed_live = _live_get_seed(w_name)
+                        l_seed_live = _live_get_seed(l_name)
 
                         # Determine which slot is t1 vs t2 in ESPN response
                         t1_is_winner = (t1["score"] > t2["score"])
@@ -2763,8 +2764,8 @@ with tab7:
                             "model_conf": model_fav_p,
                             "correct": model_got_it,
                             "winner_seed": w_seed_live, "loser_seed": l_seed_live,
-                            "winner_flags": _get_flags(w_name),
-                            "loser_flags": _get_flags(l_name),
+                            "winner_flags": _live_get_flags(w_name),
+                            "loser_flags": _live_get_flags(l_name),
                         }
                         # Attach box score fields
                         for k, v in box.items():
@@ -2793,8 +2794,7 @@ with tab7:
                                 if wv or lv:
                                     stat_rows.append({"Stat": label, w_name: wv, l_name: lv})
                             if stat_rows:
-                                import pandas as _pd2
-                                st.dataframe(_pd2.DataFrame(stat_rows).set_index("Stat"),
+                                st.dataframe(pd.DataFrame(stat_rows).set_index("Stat"),
                                              use_container_width=True, hide_index=False)
 
             # ── UPCOMING ─────────────────────────────────────────────────────
@@ -4154,6 +4154,23 @@ with tab10:
             'First Four tips off March 19 — Round of 64 begins March 20.</div>'
             '</div>', unsafe_allow_html=True)
     else:
+        # ── Normalize dtypes from CSV (booleans come back as strings) ──────────
+        def _to_bool(col):
+            if col.dtype == object:
+                return col.map(lambda x: str(x).strip().lower() in ("true", "1", "yes"))
+            return col.astype(bool)
+        recap_df["correct"]    = _to_bool(recap_df["correct"])
+        if "upset" in recap_df.columns:
+            recap_df["upset"] = _to_bool(recap_df["upset"])
+        else:
+            recap_df["upset"] = False
+        recap_df["model_conf"]  = pd.to_numeric(recap_df["model_conf"], errors="coerce").fillna(0.5)
+        for _sc in ("winner_seed", "loser_seed"):
+            if _sc in recap_df.columns:
+                recap_df[_sc] = pd.to_numeric(recap_df[_sc], errors="coerce").fillna(0).astype(int)
+            else:
+                recap_df[_sc] = 0
+
         total   = len(recap_df)
         correct = int(recap_df["correct"].sum())
         losses  = total - correct
@@ -4199,10 +4216,6 @@ with tab10:
             (0.5, 0.6, "50–60%"), (0.6, 0.7, "60–70%"),
             (0.7, 0.8, "70–80%"), (0.8, 1.01, "80%+"),
         ]
-        # Ensure model_conf is numeric
-        recap_df["model_conf"] = pd.to_numeric(recap_df["model_conf"], errors="coerce").fillna(0.5)
-        recap_df["correct"]    = recap_df["correct"].map(lambda x: str(x).strip().lower() in ("true","1","yes")) \
-                                  if recap_df["correct"].dtype == object else recap_df["correct"].astype(bool)
         conf_cols = st.columns(4)
         for ci, (lo, hi, label) in enumerate(conf_buckets):
             bdf = recap_df[(recap_df["model_conf"] >= lo) & (recap_df["model_conf"] < hi)]
