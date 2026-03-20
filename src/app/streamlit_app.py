@@ -2506,6 +2506,11 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
     if os.path.exists(_RESULTS_CSV):
         try:
             old_df = pd.read_csv(_RESULTS_CSV)
+            # Normalize any legacy round labels (e.g. raw ESPN headline) to FF4
+            if "round" in old_df.columns and "date" in old_df.columns:
+                mask = old_df["date"].astype(str).isin(["20260319", "20260320"]) & \
+                       ~old_df["round"].isin(["FF4", "R64", "R32", "S16", "E8", "FF", "Championship"])
+                old_df.loc[mask, "round"] = "FF4"
             existing_ids = set(str(x) for x in old_df["event_id"].tolist())
             existing_rows = old_df.to_dict("records")
         except Exception:
@@ -2526,7 +2531,13 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
             s1 = score_lkp.get(t1, 50); s2 = score_lkp.get(t2, 50)
             model_winner = t1 if win_prob_sigmoid(s1, s2) >= 0.5 else t2
             model_loser  = t2 if model_winner == t1 else t1
-            rnd = g.get("headline", "Tournament")
+            # Assign round: First Four dates get "FF4", others fall back to headline
+            game_date = str(g.get("date", ""))
+            headline  = g.get("headline", "").lower()
+            if game_date in ("20260319", "20260320") or "first four" in headline:
+                rnd = "FF4"
+            else:
+                rnd = g.get("headline", "Tournament")
             region = ""
         correct    = (winner == model_winner)
         model_conf = win_prob_sigmoid(score_lkp.get(model_winner, 50), score_lkp.get(model_loser, 50))
@@ -4126,10 +4137,11 @@ with tab10:
 
     # ── Round label display map ────────────────────────────────────────────────
     _RND_LABELS = {
+        "FF4": "First Four",
         "R64": "Round of 64", "R32": "Round of 32", "S16": "Sweet 16",
         "E8": "Elite 8", "FF": "Final Four", "Championship": "Championship",
     }
-    _RND_ORDER = ["R64", "R32", "S16", "E8", "FF", "Championship"]
+    _RND_ORDER = ["FF4", "R64", "R32", "S16", "E8", "FF", "Championship"]
 
     if recap_df.empty:
         st.markdown(
