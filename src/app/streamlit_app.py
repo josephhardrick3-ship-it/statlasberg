@@ -4226,6 +4226,6 @@ with tab8:
                         f'<div style="background:#0a1a0a;border-left:3px solid #4ade80;border-radius:5px;padding:8px 12px;margin-bottom:5px">'
                         f'<div style="color:#4ade80;font-weight:700">✅ {r["winner"]} def. {r["loser"]}</div>'
                         f'<div style="color:#94a3b8;font-size:0.78rem">Confidence: {r["model_conf"]*100:.0f}% · Seed {int(r["winner_seed"])} over {int(r["loser_seed"])}'
-                        f'{"  ·  " + r["winner_hot"] if r.get("winner_hot") else ""}</div>'
+                        f'{"  ·  " + str(r["winner_hot"]) if r.get("winner_hot") and str(r.get("winner_hot")) not in ("", "nan") else ""}</div>'
                         f'<div style="color:#64748b;font-size:0.75rem;margin-top:3px">{str(r.get("narrative",""))}</div>'
                         f'</div>', unsafe_allow_html=True)
