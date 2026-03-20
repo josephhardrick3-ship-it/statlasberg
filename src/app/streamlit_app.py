@@ -2311,65 +2311,90 @@ def fetch_all_tournament_games(bracket_teams):
 
 
 def game_narrative(row, bkt_df):
-    """Generate a 2-3 sentence Statlas game recap narrative."""
+    """Fact-based, margin-calibrated game recap. No causal claims, no speculation."""
     winner  = str(row.get("winner", ""))
     loser   = str(row.get("loser", ""))
     correct = bool(row.get("correct", False))
     conf    = float(row.get("model_conf", 0.5)) * 100
     w_seed  = int(row.get("winner_seed", 0))
     l_seed  = int(row.get("loser_seed", 0))
-    upset   = bool(row.get("upset", False))
-    w_hot   = str(row.get("winner_hot", ""))
-    l_hot   = str(row.get("loser_hot", ""))
     w_flags = str(row.get("winner_flags", ""))
     l_flags = str(row.get("loser_flags", ""))
     t1_sc   = int(row.get("t1_score", 0))
     t2_sc   = int(row.get("t2_score", 0))
     w_sc    = t1_sc if row.get("winner") == row.get("t1") else t2_sc
     l_sc    = t2_sc if row.get("winner") == row.get("t1") else t1_sc
+    margin  = abs(w_sc - l_sc)
 
-    # Find top feature edges (winner - loser)
+    # Margin classification — governs how much signal to extract
+    if margin <= 3:
+        margin_tag = "coin-flip"   # one possession; don't over-update either direction
+    elif margin <= 7:
+        margin_tag = "close"       # competitive; mild signal
+    elif margin <= 14:
+        margin_tag = "clear"
+    else:
+        margin_tag = "decisive"    # strong signal; stats worth examining
+
+    # Pre-game stat gaps — only report if gap >= 5 pts to avoid noise
     feat_keys = [
         ("contender_score", "Contender Score"),
         ("clutch_score",    "Clutch Score"),
         ("defense_score",   "Defense Score"),
-        ("guard_play_score","Guard Play"),
-        ("adj_margin",      "Adj Margin"),
-        ("last10_win_pct",  "Recent Form"),
+        ("adj_margin",      "Adj. Margin"),
+        ("last10_win_pct",  "Recent Form (L10)"),
     ]
     feat_lkp = {str(r["team"]): r for _, r in bkt_df.iterrows()}
-    w_row = feat_lkp.get(winner, {})
-    l_row = feat_lkp.get(loser, {})
+    w_row = feat_lkp.get(winner, {}); l_row = feat_lkp.get(loser, {})
     edges = []
     for fk, fl in feat_keys:
         wv = safe_f(w_row.get(fk)); lv = safe_f(l_row.get(fk))
-        if wv and lv and abs(wv - lv) > 2:
-            edges.append((fl, wv - lv))
+        if wv and lv and abs(wv - lv) >= 5:
+            edges.append((fl, wv - lv, wv, lv))
     edges.sort(key=lambda x: abs(x[1]), reverse=True)
-    top_edge = f"{edges[0][0]} (+{edges[0][1]:.1f})" if edges else None
 
     parts = []
-    if correct:
-        parts.append(f"✅ Statlas called it — {winner} (#{w_seed}) handled {loser} (#{l_seed}) {w_sc}–{l_sc} at {conf:.0f}% confidence.")
-        if top_edge:
-            parts.append(f"{winner}'s {top_edge} edge held up as the key advantage.")
-        if w_hot and "HOT" in w_hot or "Hot" in w_hot:
-            parts.append(f"The 🔥 hot-streak momentum was real.")
-        if "Fraud Fav" in l_flags:
-            parts.append(f"Statlas had {loser} flagged as a Fraud Favorite — that flag proved right.")
-    else:
-        if upset:
-            parts.append(f"❌ Statlas missed this upset — #{w_seed} {winner} knocked off #{l_seed} {loser} {w_sc}–{l_sc} (model had {loser} at {conf:.0f}%).")
-        else:
-            parts.append(f"❌ Statlas got this one wrong — {winner} beat {loser} {w_sc}–{l_sc} despite {loser} being the {conf:.0f}% model favorite.")
-        if "Fraud Fav" in l_flags:
-            parts.append(f"The Fraud Favorite flag on {loser} was warning enough — Statlas underweighted it.")
-        elif "Dangerous" in w_flags or "Cinderella" in w_flags:
-            parts.append(f"{winner} carried a {'Dangerous Low Seed' if 'Dangerous' in w_flags else 'Cinderella'} flag — Statlas saw the threat but didn't pull the trigger.")
-        if top_edge:
-            parts.append(f"In hindsight, {winner}'s {top_edge} advantage explains the outcome.")
 
-    return " ".join(parts) if parts else f"{winner} def. {loser} {w_sc}–{l_sc}."
+    # Line 1: plain facts
+    seed_txt = f"#{w_seed} over #{l_seed}" if w_seed and l_seed else ""
+    seed_part = f" ({seed_txt})" if seed_txt else ""
+    if correct:
+        parts.append(f"✅ {winner} def. {loser} {w_sc}–{l_sc}{seed_part}, {margin}-pt margin. Statlas had {loser} as the {conf:.0f}% model pick — correct.")
+    else:
+        parts.append(f"❌ {winner} def. {loser} {w_sc}–{l_sc}{seed_part}, {margin}-pt margin. Statlas had {loser} at {conf:.0f}% — missed.")
+
+    # Line 2: calibrated interpretation based on margin
+    if margin_tag == "coin-flip":
+        parts.append(f"A {margin}-point game is within normal variance. The model's pre-game read was not clearly wrong — no meaningful update either direction.")
+    elif margin_tag == "close":
+        if correct:
+            parts.append(f"Correct call, but a {margin}-point result. The model's direction was right; the margin doesn't add much confidence.")
+        else:
+            parts.append(f"A {margin}-point game. Competitive result — the model's principles weren't obviously off. Don't over-correct from one close game.")
+    else:
+        # Clear or decisive: report the biggest pre-game stat gap as context
+        if edges:
+            fl0, diff0, wv0, lv0 = edges[0]
+            winner_had_higher = diff0 > 0
+            parts.append(
+                f"Pre-game {fl0}: {winner} {wv0:.1f} vs {loser} {lv0:.1f} (gap {diff0:+.1f}). "
+                f"{'Stat gap aligned with outcome.' if (winner_had_higher and correct) or (not winner_had_higher and not correct) else 'Stat gap did not align with outcome.'}"
+            )
+        elif not correct:
+            parts.append(f"A {margin}-point decisive result the model didn't see coming. Worth examining which pre-game signals were misweighted.")
+
+    # Line 3: flags — state as tagged facts only, no conclusions
+    flag_facts = []
+    if "Fraud Fav" in l_flags:
+        flag_facts.append(f"{loser} was tagged Fraud Favorite pre-tournament")
+    if "Dangerous" in w_flags:
+        flag_facts.append(f"{winner} was tagged Dangerous Low Seed")
+    if "Cinderella" in w_flags:
+        flag_facts.append(f"{winner} had a Cinderella tag")
+    if flag_facts and margin_tag in ("clear", "decisive"):
+        parts.append("Flags going in: " + "; ".join(flag_facts) + ".")
+
+    return " ".join(parts)
 
 
 def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
