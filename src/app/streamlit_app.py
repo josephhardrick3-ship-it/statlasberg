@@ -2157,6 +2157,61 @@ def fetch_live_games():
         return []
 
 
+@st.cache_data(ttl=3600)
+def fetch_game_box_score(event_id):
+    """Extract actual game stats from ESPN summary endpoint the moment a game ends.
+    Returns dict with per-team FG%, rebounds, turnovers, assists, half scores, etc.
+    Keys: t1_name, t1_fg_pct, t1_rebounds, t1_turnovers, t1_h1, t1_h2, ... (t2_ same)
+    All values are raw strings as ESPN returns them — caller converts to float as needed."""
+    if not _REQUESTS_OK or not event_id:
+        return {}
+    try:
+        url = ESPN_PLAYBYPLAY.format(event_id=event_id)
+        resp = _requests.get(url, timeout=8, headers={"User-Agent": "statlasberg/1.0"})
+        resp.raise_for_status()
+        data = resp.json()
+
+        boxscore = data.get("boxscore", {})
+        teams = boxscore.get("teams", [])
+        if len(teams) < 2:
+            return {}
+
+        result = {}
+        for i, td in enumerate(teams[:2]):
+            pfx = f"t{i+1}_"
+            result[f"{pfx}name"] = td.get("team", {}).get("displayName", "")
+            stats = {s.get("name", ""): s.get("displayValue", "")
+                     for s in td.get("statistics", [])}
+            for espn_key, out_key in [
+                ("fieldGoalPct",           "fg_pct"),
+                ("threePointFieldGoalPct", "fg3_pct"),
+                ("freeThrowPct",           "ft_pct"),
+                ("totalRebounds",          "rebounds"),
+                ("offensiveRebounds",      "off_reb"),
+                ("turnovers",              "turnovers"),
+                ("assists",                "assists"),
+                ("steals",                 "steals"),
+                ("blocks",                 "blocks"),
+                ("fieldGoalsMade-fieldGoalsAttempted", "fg_made_att"),
+            ]:
+                result[f"{pfx}{out_key}"] = stats.get(espn_key, "")
+
+        # Line scores (points per half/OT) from header competitions
+        header = data.get("header", {})
+        comps_list = header.get("competitions", [])
+        if comps_list:
+            competitors = comps_list[0].get("competitors", [])
+            for i, comp in enumerate(competitors[:2]):
+                pfx = f"t{i+1}_"
+                ls = comp.get("linescores", [])
+                result[f"{pfx}h1"] = ls[0].get("displayValue", "") if len(ls) > 0 else ""
+                result[f"{pfx}h2"] = ls[1].get("displayValue", "") if len(ls) > 1 else ""
+
+        return result
+    except Exception:
+        return {}
+
+
 def fetch_play_by_play(event_id):
     """Return last N plays and current scoring run for a game."""
     if not _REQUESTS_OK or not event_id:
@@ -2298,20 +2353,31 @@ def fetch_all_tournament_games(bracket_teams):
                 winner = t1_name if t1_score >= t2_score else t2_name
                 loser  = t2_name if t1_score >= t2_score else t1_name
                 headline = comp.get("notes", [{}])[0].get("headline", "")
+                box = fetch_game_box_score(eid)
                 seen[eid] = {
                     "event_id": eid, "date": d,
                     "t1": t1_name, "t2": t2_name,
                     "winner": winner, "loser": loser,
                     "t1_score": t1_score, "t2_score": t2_score,
                     "headline": headline,
+                    **box,  # attach all box score fields (fg_pct, rebounds, etc.)
                 }
         except Exception:
             continue
     return seen
 
 
+def _safe_pct(val_str):
+    """Convert ESPN stat string like '52.3' or '52.3%' to float, or None."""
+    try:
+        return float(str(val_str).replace("%", "").strip())
+    except Exception:
+        return None
+
+
 def game_narrative(row, bkt_df):
-    """Fact-based, margin-calibrated game recap. No causal claims, no speculation."""
+    """Fact-based, margin-calibrated recap. Uses real box score stats when available,
+    falls back to pre-game model scores. No causal claims, no speculation."""
     winner  = str(row.get("winner", ""))
     loser   = str(row.get("loser", ""))
     correct = bool(row.get("correct", False))
@@ -2320,79 +2386,97 @@ def game_narrative(row, bkt_df):
     l_seed  = int(row.get("loser_seed", 0))
     w_flags = str(row.get("winner_flags", ""))
     l_flags = str(row.get("loser_flags", ""))
+    t1      = str(row.get("t1", ""))
     t1_sc   = int(row.get("t1_score", 0))
     t2_sc   = int(row.get("t2_score", 0))
-    w_sc    = t1_sc if row.get("winner") == row.get("t1") else t2_sc
-    l_sc    = t2_sc if row.get("winner") == row.get("t1") else t1_sc
+    w_sc    = t1_sc if winner == t1 else t2_sc
+    l_sc    = t2_sc if winner == t1 else t1_sc
     margin  = abs(w_sc - l_sc)
+
+    # Determine which ESPN team slot is winner vs loser
+    t1_is_winner = (winner == t1)
+    w_pfx = "t1_" if t1_is_winner else "t2_"
+    l_pfx = "t2_" if t1_is_winner else "t1_"
+
+    # Pull actual box score stats (real game data, not pre-game estimates)
+    w_fg    = _safe_pct(row.get(f"{w_pfx}fg_pct"))
+    l_fg    = _safe_pct(row.get(f"{l_pfx}fg_pct"))
+    w_fg3   = _safe_pct(row.get(f"{w_pfx}fg3_pct"))
+    l_fg3   = _safe_pct(row.get(f"{l_pfx}fg3_pct"))
+    w_reb   = _safe_pct(row.get(f"{w_pfx}rebounds"))
+    l_reb   = _safe_pct(row.get(f"{l_pfx}rebounds"))
+    w_to    = _safe_pct(row.get(f"{w_pfx}turnovers"))
+    l_to    = _safe_pct(row.get(f"{l_pfx}turnovers"))
+    w_h1    = row.get(f"{w_pfx}h1", ""); l_h1 = row.get(f"{l_pfx}h1", "")
+    w_h2    = row.get(f"{w_pfx}h2", ""); l_h2 = row.get(f"{l_pfx}h2", "")
+    has_box = any(v is not None for v in [w_fg, l_fg, w_reb, l_reb])
 
     # Margin classification — governs how much signal to extract
     if margin <= 3:
-        margin_tag = "coin-flip"   # one possession; don't over-update either direction
+        margin_tag = "coin-flip"
     elif margin <= 7:
-        margin_tag = "close"       # competitive; mild signal
+        margin_tag = "close"
     elif margin <= 14:
         margin_tag = "clear"
     else:
-        margin_tag = "decisive"    # strong signal; stats worth examining
-
-    # Pre-game stat gaps — only report if gap >= 5 pts to avoid noise
-    feat_keys = [
-        ("contender_score", "Contender Score"),
-        ("clutch_score",    "Clutch Score"),
-        ("defense_score",   "Defense Score"),
-        ("adj_margin",      "Adj. Margin"),
-        ("last10_win_pct",  "Recent Form (L10)"),
-    ]
-    feat_lkp = {str(r["team"]): r for _, r in bkt_df.iterrows()}
-    w_row = feat_lkp.get(winner, {}); l_row = feat_lkp.get(loser, {})
-    edges = []
-    for fk, fl in feat_keys:
-        wv = safe_f(w_row.get(fk)); lv = safe_f(l_row.get(fk))
-        if wv and lv and abs(wv - lv) >= 5:
-            edges.append((fl, wv - lv, wv, lv))
-    edges.sort(key=lambda x: abs(x[1]), reverse=True)
+        margin_tag = "decisive"
 
     parts = []
 
-    # Line 1: plain facts
-    seed_txt = f"#{w_seed} over #{l_seed}" if w_seed and l_seed else ""
+    # Line 1: plain facts — score, seeds, model pick
+    seed_txt  = f"#{w_seed} over #{l_seed}" if w_seed and l_seed else ""
     seed_part = f" ({seed_txt})" if seed_txt else ""
-    if correct:
-        parts.append(f"✅ {winner} def. {loser} {w_sc}–{l_sc}{seed_part}, {margin}-pt margin. Statlas had {loser} as the {conf:.0f}% model pick — correct.")
-    else:
-        parts.append(f"❌ {winner} def. {loser} {w_sc}–{l_sc}{seed_part}, {margin}-pt margin. Statlas had {loser} at {conf:.0f}% — missed.")
+    pick_result = "correct" if correct else "missed"
+    parts.append(
+        f"{'✅' if correct else '❌'} {winner} def. {loser} {w_sc}–{l_sc}{seed_part}, "
+        f"{margin}-pt margin. Model had {row.get('model_pick','?')} at {conf:.0f}% — {pick_result}."
+    )
 
-    # Line 2: calibrated interpretation based on margin
-    if margin_tag == "coin-flip":
-        parts.append(f"A {margin}-point game is within normal variance. The model's pre-game read was not clearly wrong — no meaningful update either direction.")
-    elif margin_tag == "close":
-        if correct:
-            parts.append(f"Correct call, but a {margin}-point result. The model's direction was right; the margin doesn't add much confidence.")
-        else:
-            parts.append(f"A {margin}-point game. Competitive result — the model's principles weren't obviously off. Don't over-correct from one close game.")
-    else:
-        # Clear or decisive: report the biggest pre-game stat gap as context
-        if edges:
-            fl0, diff0, wv0, lv0 = edges[0]
-            winner_had_higher = diff0 > 0
+    # Line 2: real box score facts (if available) OR margin-based interpretation
+    if has_box and margin_tag in ("clear", "decisive"):
+        stat_facts = []
+        if w_fg is not None and l_fg is not None:
+            stat_facts.append(f"shooting: {winner} {w_fg:.1f}% FG vs {loser} {l_fg:.1f}%")
+        if w_reb is not None and l_reb is not None and abs(w_reb - l_reb) >= 4:
+            stat_facts.append(f"rebounding: {int(w_reb)}–{int(l_reb)}")
+        if w_to is not None and l_to is not None and abs(w_to - l_to) >= 3:
+            stat_facts.append(f"turnovers: {winner} {int(w_to)} vs {loser} {int(l_to)}")
+        if w_h1 and l_h1 and w_h2 and l_h2:
+            stat_facts.append(f"halves: {winner} {w_h1}–{w_h2}, {loser} {l_h1}–{l_h2}")
+        if stat_facts:
+            parts.append("Game stats — " + "; ".join(stat_facts) + ".")
+    elif has_box and margin_tag in ("coin-flip", "close"):
+        if w_fg is not None and l_fg is not None:
             parts.append(
-                f"Pre-game {fl0}: {winner} {wv0:.1f} vs {loser} {lv0:.1f} (gap {diff0:+.1f}). "
-                f"{'Stat gap aligned with outcome.' if (winner_had_higher and correct) or (not winner_had_higher and not correct) else 'Stat gap did not align with outcome.'}"
+                f"A {margin}-point game: {winner} shot {w_fg:.1f}% vs {loser} {l_fg:.1f}%. "
+                f"Close enough that this result doesn't strongly favor one read over the other."
             )
-        elif not correct:
-            parts.append(f"A {margin}-point decisive result the model didn't see coming. Worth examining which pre-game signals were misweighted.")
+        else:
+            parts.append(f"A {margin}-point game — no strong directional takeaway.")
+    else:
+        # No box score yet: fall back to pre-game model score gap
+        feat_lkp = {str(r["team"]): r for _, r in bkt_df.iterrows()}
+        w_row2 = feat_lkp.get(winner, {}); l_row2 = feat_lkp.get(loser, {})
+        for fk, fl in [("contender_score","Contender Score"),("adj_margin","Adj. Margin")]:
+            wv = safe_f(w_row2.get(fk)); lv = safe_f(l_row2.get(fk))
+            if wv and lv and abs(wv - lv) >= 5:
+                parts.append(f"Pre-game {fl}: {winner} {wv:.1f} vs {loser} {lv:.1f} (gap {wv-lv:+.1f}).")
+                break
+        if margin_tag == "coin-flip":
+            parts.append(f"{margin}-pt margin — within normal variance. No strong update either direction.")
+        elif margin_tag == "close" and not correct:
+            parts.append(f"{margin}-pt game. Competitive result — don't over-correct from one close miss.")
 
-    # Line 3: flags — state as tagged facts only, no conclusions
+    # Line 3: flags as tagged facts only (not conclusions), only on clear/decisive games
     flag_facts = []
     if "Fraud Fav" in l_flags:
-        flag_facts.append(f"{loser} was tagged Fraud Favorite pre-tournament")
+        flag_facts.append(f"{loser} tagged Fraud Favorite pre-tournament")
     if "Dangerous" in w_flags:
-        flag_facts.append(f"{winner} was tagged Dangerous Low Seed")
+        flag_facts.append(f"{winner} tagged Dangerous Low Seed")
     if "Cinderella" in w_flags:
-        flag_facts.append(f"{winner} had a Cinderella tag")
+        flag_facts.append(f"{winner} had Cinderella tag")
     if flag_facts and margin_tag in ("clear", "decisive"):
-        parts.append("Flags going in: " + "; ".join(flag_facts) + ".")
+        parts.append("Flags: " + "; ".join(flag_facts) + ".")
 
     return " ".join(parts)
 
@@ -2451,6 +2535,13 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
         model_conf = win_prob_sigmoid(score_lkp.get(model_winner, 50), score_lkp.get(model_loser, 50))
         w_seed = seed_lkp.get(winner, 0); l_seed = seed_lkp.get(loser, 0)
         upset  = (w_seed > l_seed + 3) if w_seed and l_seed else False
+        # Box score columns — stored directly from ESPN (already attached to g by fetch_all)
+        box_cols = [
+            "t1_fg_pct","t1_fg3_pct","t1_ft_pct","t1_rebounds","t1_off_reb",
+            "t1_turnovers","t1_assists","t1_steals","t1_blocks","t1_h1","t1_h2",
+            "t2_fg_pct","t2_fg3_pct","t2_ft_pct","t2_rebounds","t2_off_reb",
+            "t2_turnovers","t2_assists","t2_steals","t2_blocks","t2_h1","t2_h2",
+        ]
         row_dict = {
             "event_id":     eid,
             "date":         g.get("date", ""),
@@ -2468,8 +2559,10 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
             "loser_flags":  flag_lkp.get(loser, ""),
             "winner_hot":   hl_lkp.get(winner, ""),
             "loser_hot":    hl_lkp.get(loser, ""),
-            "narrative":    "",  # filled below
+            "narrative":    "",
         }
+        for bc in box_cols:
+            row_dict[bc] = g.get(bc, "")
         row_dict["narrative"] = game_narrative(row_dict, in_bracket)
         new_rows.append(row_dict)
 
@@ -2624,6 +2717,75 @@ with tab7:
                             f'📊 Statlasberg pre-game pick: <strong style="color:#f1f5f9">{model_fav}</strong> '
                             f'({model_fav_p*100:.0f}%) — {verdict}'
                             f'</div>', unsafe_allow_html=True)
+
+                        # ── Instant recap with real box score ─────────────────
+                        box = fetch_game_box_score(g["event_id"])
+                        w_name = winner["name"]; l_name = loser["name"]
+                        # Find seed info from in_bracket
+                        def _get_seed(team_name):
+                            norm = _BRACKET_NORM.get(team_name, team_name)
+                            row_match = in_bracket[in_bracket["team"].str.lower() == norm.lower()]
+                            if not row_match.empty:
+                                return int(row_match.iloc[0].get("seed", 0) or 0)
+                            return 0
+                        w_seed_live = _get_seed(w_name)
+                        l_seed_live = _get_seed(l_name)
+
+                        # Build flags string for winner/loser
+                        def _get_flags(team_name):
+                            norm = _BRACKET_NORM.get(team_name, team_name)
+                            row_match = in_bracket[in_bracket["team"].str.lower() == norm.lower()]
+                            if not row_match.empty:
+                                r = row_match.iloc[0]
+                                flags = []
+                                for fcol in ["fraud_favorite","cinderella","clutch_score","hot"]:
+                                    if r.get(fcol): flags.append(fcol.replace("_"," ").title())
+                                return " | ".join(flags)
+                            return ""
+
+                        # Determine which slot is t1 vs t2 in ESPN response
+                        t1_is_winner = (t1["score"] > t2["score"])
+                        row_dict = {
+                            "t1": t1["name"], "t2": t2["name"],
+                            "t1_score": t1["score"], "t2_score": t2["score"],
+                            "winner": w_name, "loser": l_name,
+                            "model_pick": model_fav,
+                            "model_conf": model_fav_p,
+                            "correct": model_got_it,
+                            "winner_seed": w_seed_live, "loser_seed": l_seed_live,
+                            "winner_flags": _get_flags(w_name),
+                            "loser_flags": _get_flags(l_name),
+                        }
+                        # Attach box score fields
+                        for k, v in box.items():
+                            row_dict[k] = v
+                        narrative = game_narrative(row_dict, in_bracket)
+                        if narrative:
+                            st.markdown(
+                                f'<div style="background:#0f1f2e;border-left:3px solid {"#4ade80" if model_got_it else "#f87171"};'
+                                f'border-radius:4px;padding:8px 12px;margin-top:8px;color:#e2e8f0;font-size:0.82rem">'
+                                f'<div style="font-weight:700;color:#94a3b8;margin-bottom:4px">📋 Statlas Recap</div>'
+                                f'{narrative.replace(chr(10), "<br>")}'
+                                f'</div>', unsafe_allow_html=True)
+
+                        # Show key box score stats if available
+                        if box and any(box.get(f"t{i}_{s}") for i in [1,2] for s in ["fg_pct","rebounds","turnovers"]):
+                            w_pfx = "t1_" if t1_is_winner else "t2_"
+                            l_pfx = "t2_" if t1_is_winner else "t1_"
+                            stat_rows = []
+                            for stat_key, label in [
+                                ("fg_pct", "FG%"), ("fg3_pct", "3PT%"),
+                                ("rebounds", "Rebounds"), ("turnovers", "Turnovers"),
+                                ("assists", "Assists"),
+                            ]:
+                                wv = box.get(f"{w_pfx}{stat_key}", "")
+                                lv = box.get(f"{l_pfx}{stat_key}", "")
+                                if wv or lv:
+                                    stat_rows.append({"Stat": label, w_name: wv, l_name: lv})
+                            if stat_rows:
+                                import pandas as _pd2
+                                st.dataframe(_pd2.DataFrame(stat_rows).set_index("Stat"),
+                                             use_container_width=True, hide_index=False)
 
             # ── UPCOMING ─────────────────────────────────────────────────────
             if upcoming:
