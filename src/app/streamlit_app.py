@@ -2373,42 +2373,45 @@ def _safe_pct(val_str):
 
 
 def game_narrative(row, bkt_df):
-    """Fact-based, margin-calibrated recap. Uses real box score stats when available,
-    falls back to pre-game model scores. No causal claims, no speculation."""
+    """Introspective, fact-based recap — what the game stats reveal about basketball
+    and what the model should take away. Margin-calibrated: coin-flips get humility,
+    decisive games get real analysis. No causal claims, no hallucination."""
     winner  = str(row.get("winner", ""))
     loser   = str(row.get("loser", ""))
-    correct = bool(row.get("correct", False))
+    correct = str(row.get("correct", "False")).strip().lower() in ("true", "1", "yes")
     conf    = float(row.get("model_conf", 0.5)) * 100
-    w_seed  = int(row.get("winner_seed", 0))
-    l_seed  = int(row.get("loser_seed", 0))
+    w_seed  = int(float(row.get("winner_seed", 0) or 0))
+    l_seed  = int(float(row.get("loser_seed",  0) or 0))
     w_flags = str(row.get("winner_flags", ""))
-    l_flags = str(row.get("loser_flags", ""))
+    l_flags = str(row.get("loser_flags",  ""))
+    rnd     = str(row.get("round", ""))
     t1      = str(row.get("t1", ""))
-    t1_sc   = int(row.get("t1_score", 0))
-    t2_sc   = int(row.get("t2_score", 0))
+    t1_sc   = int(float(row.get("t1_score", 0) or 0))
+    t2_sc   = int(float(row.get("t2_score", 0) or 0))
     w_sc    = t1_sc if winner == t1 else t2_sc
     l_sc    = t2_sc if winner == t1 else t1_sc
     margin  = abs(w_sc - l_sc)
 
-    # Determine which ESPN team slot is winner vs loser
     t1_is_winner = (winner == t1)
     w_pfx = "t1_" if t1_is_winner else "t2_"
     l_pfx = "t2_" if t1_is_winner else "t1_"
 
-    # Pull actual box score stats (real game data, not pre-game estimates)
-    w_fg    = _safe_pct(row.get(f"{w_pfx}fg_pct"))
-    l_fg    = _safe_pct(row.get(f"{l_pfx}fg_pct"))
-    w_fg3   = _safe_pct(row.get(f"{w_pfx}fg3_pct"))
-    l_fg3   = _safe_pct(row.get(f"{l_pfx}fg3_pct"))
-    w_reb   = _safe_pct(row.get(f"{w_pfx}rebounds"))
-    l_reb   = _safe_pct(row.get(f"{l_pfx}rebounds"))
-    w_to    = _safe_pct(row.get(f"{w_pfx}turnovers"))
-    l_to    = _safe_pct(row.get(f"{l_pfx}turnovers"))
-    w_h1    = row.get(f"{w_pfx}h1", ""); l_h1 = row.get(f"{l_pfx}h1", "")
-    w_h2    = row.get(f"{w_pfx}h2", ""); l_h2 = row.get(f"{l_pfx}h2", "")
+    # Real game stats
+    w_fg  = _safe_pct(row.get(f"{w_pfx}fg_pct"))
+    l_fg  = _safe_pct(row.get(f"{l_pfx}fg_pct"))
+    w_fg3 = _safe_pct(row.get(f"{w_pfx}fg3_pct"))
+    l_fg3 = _safe_pct(row.get(f"{l_pfx}fg3_pct"))
+    w_reb = _safe_pct(row.get(f"{w_pfx}rebounds"))
+    l_reb = _safe_pct(row.get(f"{l_pfx}rebounds"))
+    w_to  = _safe_pct(row.get(f"{w_pfx}turnovers"))
+    l_to  = _safe_pct(row.get(f"{l_pfx}turnovers"))
+    w_ast = _safe_pct(row.get(f"{w_pfx}assists"))
+    l_ast = _safe_pct(row.get(f"{l_pfx}assists"))
+    w_h1  = row.get(f"{w_pfx}h1", ""); l_h1 = row.get(f"{l_pfx}h1", "")
+    w_h2  = row.get(f"{w_pfx}h2", ""); l_h2 = row.get(f"{l_pfx}h2", "")
     has_box = any(v is not None for v in [w_fg, l_fg, w_reb, l_reb])
 
-    # Margin classification — governs how much signal to extract
+    # Margin classification
     if margin <= 3:
         margin_tag = "coin-flip"
     elif margin <= 7:
@@ -2418,64 +2421,172 @@ def game_narrative(row, bkt_df):
     else:
         margin_tag = "decisive"
 
+    # Pre-game model scores for context when no box available
+    feat_lkp = {str(r["team"]): r for _, r in bkt_df.iterrows()}
+    w_row2 = feat_lkp.get(winner, {}); l_row2 = feat_lkp.get(loser, {})
+    w_cs = safe_f(w_row2.get("contender_score")); l_cs = safe_f(l_row2.get("contender_score"))
+    w_am = safe_f(w_row2.get("adj_margin"));      l_am = safe_f(l_row2.get("adj_margin"))
+
     parts = []
 
-    # Line 1: plain facts — score, seeds, model pick
-    seed_txt  = f"#{w_seed} over #{l_seed}" if w_seed and l_seed else ""
-    seed_part = f" ({seed_txt})" if seed_txt else ""
-    pick_result = "correct" if correct else "missed"
+    # ── Line 1: result + model verdict ────────────────────────────────────────
+    seed_part = f" (#{w_seed} over #{l_seed})" if w_seed and l_seed else ""
+    upset_note = " — UPSET" if w_seed and l_seed and w_seed > l_seed + 2 else ""
     parts.append(
-        f"{'✅' if correct else '❌'} {winner} def. {loser} {w_sc}–{l_sc}{seed_part}, "
-        f"{margin}-pt margin. Model had {row.get('model_pick','?')} at {conf:.0f}% — {pick_result}."
+        f"{'✅' if correct else '❌'} {winner} def. {loser} {w_sc}–{l_sc}{seed_part}{upset_note}. "
+        f"Model picked {row.get('model_pick','?')} at {conf:.0f}% confidence — {'correct' if correct else 'missed'}."
     )
 
-    # Line 2: real box score facts (if available) OR margin-based interpretation
-    if has_box and margin_tag in ("clear", "decisive"):
-        stat_facts = []
-        if w_fg is not None and l_fg is not None:
-            stat_facts.append(f"shooting: {winner} {w_fg:.1f}% FG vs {loser} {l_fg:.1f}%")
-        if w_reb is not None and l_reb is not None and abs(w_reb - l_reb) >= 4:
-            stat_facts.append(f"rebounding: {int(w_reb)}–{int(l_reb)}")
-        if w_to is not None and l_to is not None and abs(w_to - l_to) >= 3:
-            stat_facts.append(f"turnovers: {winner} {int(w_to)} vs {loser} {int(l_to)}")
-        if w_h1 and l_h1 and w_h2 and l_h2:
-            stat_facts.append(f"halves: {winner} {w_h1}–{w_h2}, {loser} {l_h1}–{l_h2}")
-        if stat_facts:
-            parts.append("Game stats — " + "; ".join(stat_facts) + ".")
-    elif has_box and margin_tag in ("coin-flip", "close"):
-        if w_fg is not None and l_fg is not None:
-            parts.append(
-                f"A {margin}-point game: {winner} shot {w_fg:.1f}% vs {loser} {l_fg:.1f}%. "
-                f"Close enough that this result doesn't strongly favor one read over the other."
-            )
-        else:
-            parts.append(f"A {margin}-point game — no strong directional takeaway.")
+    # ── Line 2: basketball insight from real stats ─────────────────────────────
+    if has_box:
+        fg_gap = (w_fg - l_fg) if w_fg is not None and l_fg is not None else None
+        reb_gap = (w_reb - l_reb) if w_reb is not None and l_reb is not None else None
+        to_gap  = (l_to - w_to) if w_to is not None and l_to is not None else None  # positive = winner had fewer TOs
+
+        if margin_tag in ("decisive",):
+            # Find the most telling stat — biggest absolute gap
+            insights = []
+            if fg_gap is not None and abs(fg_gap) >= 8:
+                if fg_gap > 0:
+                    insights.append(
+                        f"{winner} shot {w_fg:.0f}% vs {loser}'s {l_fg:.0f}% — "
+                        f"a {fg_gap:.0f}-point FG% advantage almost always decides the final margin in tournament play."
+                    )
+                else:
+                    insights.append(
+                        f"{loser} actually shot better ({l_fg:.0f}% vs {w_fg:.0f}%) but still lost by {margin} — "
+                        f"other factors (turnovers, rebounding) overcame the shooting gap."
+                    )
+            if reb_gap is not None and reb_gap >= 7 and not insights:
+                insights.append(
+                    f"{winner} dominated the glass {int(w_reb)}–{int(l_reb)} — "
+                    f"in March, extra possessions from offensive rebounds compound into a scoring gap that's hard to erase."
+                )
+            if to_gap is not None and to_gap >= 5 and not insights:
+                insights.append(
+                    f"{loser} committed {int(l_to)} turnovers to {winner}'s {int(w_to)} — "
+                    f"teams that give up that many extra possessions rarely advance in the tournament."
+                )
+            # Halftime story
+            if w_h1 and l_h1 and w_h2 and l_h2:
+                try:
+                    wh1, lh1, wh2, lh2 = int(w_h1), int(l_h1), int(w_h2), int(l_h2)
+                    if lh1 > wh1 and wh2 > lh2:
+                        insights.append(
+                            f"{winner} trailed at half ({wh1}–{lh1}) but outscored {loser} {wh2}–{lh2} in the second half — "
+                            f"halftime adjustments are one of the most underrated edges in March."
+                        )
+                    elif wh1 > lh1 + 8:
+                        insights.append(
+                            f"Built a {wh1}–{lh1} halftime lead and closed it out — "
+                            f"teams that go up big early in tournament games convert at a high rate."
+                        )
+                except Exception:
+                    pass
+            if insights:
+                parts.append(insights[0])
+            elif fg_gap is not None:
+                parts.append(
+                    f"Shooting: {winner} {w_fg:.0f}% vs {loser} {l_fg:.0f}%. "
+                    f"A {margin}-point blowout — the stats matched the result."
+                )
+
+        elif margin_tag == "clear":
+            # Clear wins — find the primary driver
+            stat_lines = []
+            if fg_gap is not None:
+                stat_lines.append(("fg", abs(fg_gap), f"FG% edge ({w_fg:.0f}% vs {l_fg:.0f}%)"))
+            if reb_gap is not None and reb_gap >= 4:
+                stat_lines.append(("reb", reb_gap, f"rebounding edge ({int(w_reb)}–{int(l_reb)})"))
+            if to_gap is not None and to_gap >= 3:
+                stat_lines.append(("to", to_gap, f"turnover advantage ({int(w_to)} vs {int(l_to)})"))
+            stat_lines.sort(key=lambda x: x[1], reverse=True)
+            if stat_lines:
+                primary = stat_lines[0][2]
+                if fg_gap is not None and fg_gap < 0 and correct:
+                    parts.append(
+                        f"{loser} actually shot better ({l_fg:.0f}% vs {w_fg:.0f}%), "
+                        f"but {winner}'s {stat_lines[-1][2] if len(stat_lines)>1 else 'overall play'} "
+                        f"told a different story. The model's pre-game read held up despite the shooting numbers."
+                    )
+                else:
+                    parts.append(
+                        f"{winner}'s {primary} was the clearest separator — "
+                        f"a {margin}-point tournament win with that kind of {'efficiency' if 'FG' in primary else 'advantage'} "
+                        f"suggests {'the model's confidence was grounded in real quality' if correct else 'the actual performance outpaced what the model saw pre-game'}."
+                    )
+            else:
+                parts.append(
+                    f"A {margin}-point win — clear enough to draw signal from, "
+                    f"but no single stat dominated the box score."
+                )
+
+        else:  # coin-flip or close
+            if fg_gap is not None:
+                if abs(fg_gap) <= 4:
+                    parts.append(
+                        f"Both teams shot similarly ({w_fg:.0f}% vs {l_fg:.0f}%) and it came down to {margin} points — "
+                        f"games this tight often turn on late free throws or a single possession. "
+                        f"{'The model was right directionally, but the margin says this was anyone\'s game.' if correct else 'A loss this close doesn\'t necessarily mean the model\'s read was wrong.'}"
+                    )
+                else:
+                    parts.append(
+                        f"{winner} shot {w_fg:.0f}% vs {loser}'s {l_fg:.0f}%, yet it came down to {margin} — "
+                        f"{'something beyond shooting efficiency kept this close (turnovers, rebounding, late-game execution).' if correct else 'the shooting edge wasn\'t enough to convert, which happens in close tournament games.'}"
+                    )
+            else:
+                parts.append(
+                    f"A {margin}-point game — outcomes this close carry high variance. "
+                    f"{'Don\'t over-correct from a close win; the signal is weak.' if correct else 'Don\'t over-correct from a close miss; the model\'s principles may still be sound.'}"
+                )
+
     else:
-        # No box score yet: fall back to pre-game model score gap
-        feat_lkp = {str(r["team"]): r for _, r in bkt_df.iterrows()}
-        w_row2 = feat_lkp.get(winner, {}); l_row2 = feat_lkp.get(loser, {})
-        for fk, fl in [("contender_score","Contender Score"),("adj_margin","Adj. Margin")]:
-            wv = safe_f(w_row2.get(fk)); lv = safe_f(l_row2.get(fk))
-            if wv and lv and abs(wv - lv) >= 5:
-                parts.append(f"Pre-game {fl}: {winner} {wv:.1f} vs {loser} {lv:.1f} (gap {wv-lv:+.1f}).")
-                break
-        if margin_tag == "coin-flip":
-            parts.append(f"{margin}-pt margin — within normal variance. No strong update either direction.")
-        elif margin_tag == "close" and not correct:
-            parts.append(f"{margin}-pt game. Competitive result — don't over-correct from one close miss.")
+        # No box score — use pre-game model scores
+        if w_cs and l_cs and abs(w_cs - l_cs) >= 5:
+            cs_gap = w_cs - l_cs
+            parts.append(
+                f"Pre-game Contender Scores: {winner} {w_cs:.0f} vs {loser} {l_cs:.0f} (gap {cs_gap:+.0f}). "
+                f"{'The quality gap translated to the scoreboard.' if correct and margin_tag in ('clear','decisive') else 'Pre-game metrics suggested a gap — the result {'confirmed' if correct else 'contradicted'} that read.'.format()}"
+            )
+        elif margin_tag in ("coin-flip", "close"):
+            parts.append(
+                f"A {margin}-point result with no box score yet — "
+                f"{'too close to read strong signal into.' if correct else 'close enough that this could go either way on a different night.'}"
+            )
 
-    # Line 3: flags as tagged facts only (not conclusions), only on clear/decisive games
-    flag_facts = []
-    if "Fraud Fav" in l_flags:
-        flag_facts.append(f"{loser} tagged Fraud Favorite pre-tournament")
-    if "Dangerous" in w_flags:
-        flag_facts.append(f"{winner} tagged Dangerous Low Seed")
-    if "Cinderella" in w_flags:
-        flag_facts.append(f"{winner} had Cinderella tag")
-    if flag_facts and margin_tag in ("clear", "decisive"):
-        parts.append("Flags: " + "; ".join(flag_facts) + ".")
+    # ── Line 3: what the model takes away ─────────────────────────────────────
+    if margin_tag in ("clear", "decisive"):
+        if correct:
+            if conf >= 75:
+                parts.append(
+                    f"High-confidence call ({conf:.0f}%) that held up by {margin} — "
+                    f"when the model is this sure and the margin is this wide, it's a signal the underlying quality metrics are reading the matchup correctly."
+                )
+            else:
+                parts.append(
+                    f"Model was only {conf:.0f}% here but won by {margin} — "
+                    f"the actual performance was more one-sided than the model expected. Worth checking whether this team's metrics are underrated."
+                )
+        else:
+            # Missed on a clear/decisive game — real learning
+            if conf >= 75:
+                parts.append(
+                    f"A {conf:.0f}%-confidence miss by {margin} points is meaningful feedback — "
+                    f"{'the model may be overweighting seed or pre-game metrics in this round' if rnd in ('R64','FF4') else 'teams that advance to this stage often have qualities the regular-season metrics don\'t fully capture'}."
+                )
+            else:
+                parts.append(
+                    f"Missed at {conf:.0f}% confidence and lost by {margin} — "
+                    f"the result wasn't close. {'An upset tag on ' + loser + ' was there pre-tournament.' if 'Fraud' in l_flags or 'Dangerous' in w_flags else 'This is the kind of game to revisit when reweighting features.'}"
+                )
+    elif margin_tag in ("coin-flip", "close"):
+        if not correct:
+            parts.append(
+                f"Lost by {margin} — within the noise floor of tournament basketball. "
+                f"Don't over-correct. A game this tight on a different night could easily flip."
+            )
 
-    return " ".join(parts)
+    return "\n".join(p for p in parts if p)
 
 
 def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
