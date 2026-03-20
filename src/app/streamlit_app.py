@@ -529,6 +529,29 @@ BACKTEST_PATH = "data/outputs/backtest_results.csv"
 COACH_COLS = ["team","coach","coach_years_at_school","coach_ncaa_games",
               "coach_sweet16s","coach_finalfours","first_year_coach_flag"]
 
+# Module-level so all functions (including cached ones) can reference it without scope issues
+_BRACKET_NORM = {
+    # Sample-data aliases → full SR names (no-ops on real data)
+    "BYU": "Brigham Young",
+    "TCU": "Texas Christian",
+    "Saint Marys CA": "Saint Mary's",
+    "Miami FL": "Miami",
+    "VCU": "Virginia Commonwealth",
+    "SMU": "Southern Methodist",
+    "St Johns NY": "St. John's",
+    "Pitt": "Pittsburgh",
+    "UMBC": "Maryland-Baltimore County",
+    "LIU": "Long Island University",
+    # Also handle common display variants that may appear in custom brackets
+    "St. Mary's": "Saint Mary's",
+    "Saint John's": "St. John's",
+    "NC State": "North Carolina State",
+    "N.C. State": "North Carolina State",
+    "Miami (FL)": "Miami",
+    "McNeese State": "McNeese",
+    "Prairie View": "Prairie View A&M",
+}
+
 @st.cache_data(ttl=60)  # re-read files every 60 s so pipeline updates show immediately
 def load_data():
     scores  = pd.read_csv(SCORES_PATH)  if os.path.exists(SCORES_PATH)  else pd.DataFrame()
@@ -536,32 +559,6 @@ def load_data():
     bracket = pd.read_csv(BRACKET_PATH) if os.path.exists(BRACKET_PATH) else pd.DataFrame()
 
     # ── Normalize bracket team names to match team_scores canonical names ──
-    # When using real Sports-Reference data, team names already match between
-    # bracket and scores (both use full names like "Brigham Young", "Pittsburgh").
-    # When using sample data, abbreviated names need mapping.
-    # Smart: only apply normalization if the original name ISN'T in scores but
-    # the normalized alias IS — so real data passes through untouched.
-    _BRACKET_NORM = {
-        # Sample-data aliases → full SR names (no-ops on real data)
-        "BYU": "Brigham Young",
-        "TCU": "Texas Christian",
-        "Saint Marys CA": "Saint Mary's",
-        "Miami FL": "Miami",
-        "VCU": "Virginia Commonwealth",
-        "SMU": "Southern Methodist",
-        "St Johns NY": "St. John's",
-        "Pitt": "Pittsburgh",
-        "UMBC": "Maryland-Baltimore County",
-        "LIU": "Long Island University",
-        # Also handle common display variants that may appear in custom brackets
-        "St. Mary's": "Saint Mary's",
-        "Saint John's": "St. John's",
-        "NC State": "North Carolina State",
-        "N.C. State": "North Carolina State",
-        "Miami (FL)": "Miami",
-        "McNeese State": "McNeese",
-        "Prairie View": "Prairie View A&M",
-    }
     if len(bracket) > 0 and "team" in bracket.columns:
         score_teams = set(scores["team"].tolist()) if len(scores) > 0 else set()
         def _smart_norm(t: str) -> str:
