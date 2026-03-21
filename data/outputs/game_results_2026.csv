@@ -1,34 +1,33 @@
 event_id,date,round,region,t1,t2,winner,loser,t1_score,t2_score,model_pick,model_conf,correct,upset,winner_seed,loser_seed,winner_flags,loser_flags,winner_hot,loser_hot,narrative,t1_fg_pct,t1_fg3_pct,t1_ft_pct,t1_rebounds,t1_off_reb,t1_turnovers,t1_assists,t1_steals,t1_blocks,t1_h1,t1_h2,t2_fg_pct,t2_fg3_pct,t2_ft_pct,t2_rebounds,t2_off_reb,t2_turnovers,t2_assists,t2_steals,t2_blocks,t2_h1,t2_h2
-401856478,20260319,R64,East,Duke,Siena,Duke,Siena,71,65,Duke,0.671,True,False,1,16,Dangerous,,,,"✅ Duke def. Siena 71–65 (#1 over #16). Model picked Duke at 67% confidence — correct.
-Both teams shot similarly (38% vs 41%) and it came down to 6 points — games this tight often turn on late free throws or a single possession. The model was right directionally, but the margin says this was anyones game.",38,35,100,31,11,6,15,5,2,32,39,41,19,86,43,16,8,11,3,3,43,22
-401856486,20260319,R64,,Michigan,Howard,Michigan,Howard,101,80,Michigan,0.883,True,False,1,0,Dangerous,,,,"✅ Michigan def. Howard 101–80. Model picked Michigan at 88% confidence — correct.
-Howard actually shot better (67% vs 43%) but still lost by 21 — other factors (turnovers, rebounding) overcame the shooting gap.
-High-confidence call (88%) that held up by 21 — when the model is this sure and the margin is this wide, it signals the underlying quality metrics are reading the matchup correctly.",43,48,71,23,7,8,14,3,0,50,51,67,46,80,35,4,10,27,4,8,46,34
-401856483,20260319,R64,East,Michigan State,North Dakota State,Michigan State,North Dakota State,92,67,Michigan State,0.861,True,False,3,14,Dangerous,Dangerous,,,"✅ Michigan State def. North Dakota State 92–67 (#3 over #14). Model picked Michigan State at 86% confidence — correct.
-North Dakota State actually shot better (59% vs 44%) but still lost by 25 — other factors (turnovers, rebounding) overcame the shooting gap.
-High-confidence call (86%) that held up by 25 — when the model is this sure and the margin is this wide, it signals the underlying quality metrics are reading the matchup correctly.",44,24,65,23,4,12,13,6,1,45,47,59,50,89,35,4,12,26,5,6,25,42
-401856489,20260319,R64,South,Nebraska,Troy,Nebraska,Troy,76,47,Nebraska,0.852,True,False,4,13,Dangerous,,,,"✅ Nebraska def. Troy 76–47 (#4 over #13). Model picked Nebraska at 85% confidence — correct.
-Troy actually shot better (43% vs 28%) but still lost by 29 — other factors (turnovers, rebounding) overcame the shooting gap.
-High-confidence call (85%) that held up by 29 — when the model is this sure and the margin is this wide, it signals the underlying quality metrics are reading the matchup correctly.",28,29,93,33,9,17,11,5,2,41,35,43,36,100,37,13,6,20,10,1,25,22
-401856481,20260319,R64,West,Arkansas,Hawaii,Arkansas,Hawaii,97,78,Arkansas,0.762,True,False,4,13,Dangerous,Dangerous,,,"✅ Arkansas def. Hawaii 97–78 (#4 over #13). Model picked Arkansas at 76% confidence — correct.
-Hawaii actually shot better (54% vs 45%) but still lost by 19 — other factors (turnovers, rebounding) overcame the shooting gap.
-High-confidence call (76%) that held up by 19 — when the model is this sure and the margin is this wide, it signals the underlying quality metrics are reading the matchup correctly.",45,33,55,31,11,12,15,5,2,54,43,54,19,88,41,12,10,26,8,5,36,42
-401856480,20260319,R64,West,Wisconsin,High Point,High Point,Wisconsin,82,83,Wisconsin,0.719,False,True,12,5,Dangerous,Dangerous,,,"❌ High Point def. Wisconsin 83–82 (#12 over #5) — UPSET. Model picked Wisconsin at 72% confidence — missed.
-High Point shot 48% vs Wisconsin's 42%, yet it came down to 1 — the shooting edge was not enough to convert, which happens in close tournament games.
-Lost by 1 — within the noise floor of tournament basketball. Do not over-correct. A game this tight on a different night could easily flip.",42,38,67,40,13,6,18,6,5,41,41,48,39,92,37,6,10,17,2,4,39,44
-401856488,20260319,R64,South,Vanderbilt,McNeese,Vanderbilt,McNeese,78,68,Vanderbilt,0.703,True,False,5,12,Dangerous,Dangerous,,,"✅ Vanderbilt def. McNeese 78–68 (#5 over #12). Model picked Vanderbilt at 70% confidence — correct.
-McNeese actually shot better (51% vs 36%), but Vanderbilt's turnover advantage (6 vs 13) told a different story. The model pre-game read held up despite the shooting numbers.
-Model was only 70% here but won by 10 — the actual performance was more one-sided than expected. Worth checking whether this team's metrics are underrated.",36,35,100,34,16,6,11,9,5,38,40,51,38,85,37,9,13,15,3,3,35,33
-401856482,20260319,R64,East,Louisville,South Florida,Louisville,South Florida,83,79,Louisville,0.625,True,False,6,11,Dangerous,Dangerous,,,"✅ Louisville def. South Florida 83–79 (#6 over #11). Model picked Louisville at 62% confidence — correct.
-Louisville shot 39% vs South Florida's 54%, yet it came down to 4 — something beyond shooting efficiency kept this close (turnovers, rebounding, late-game execution).",39,15,88,37,18,9,14,15,3,37,46,54,52,56,41,11,22,17,5,3,27,52
-401856490,20260319,R64,South,North Carolina,Virginia Commonwealth,Virginia Commonwealth,North Carolina,78,82,Virginia Commonwealth,0.918,True,True,11,6,Dangerous,,,,"✅ Virginia Commonwealth def. North Carolina 82–78 (#11 over #6) — UPSET. Model picked Virginia Commonwealth at 92% confidence — correct.
-Both teams shot similarly (41% vs 45%) and it came down to 4 points — games this tight often turn on late free throws or a single possession. The model was right directionally, but the margin says this was anyones game.",45,42,69,39,7,10,12,5,5,39,36,41,28,60,44,11,8,18,8,1,28,47
-401856484,20260319,R64,West,Brigham Young,Texas,Texas,Brigham Young,71,79,Texas,0.676,True,True,11,6,Dangerous,Dangerous,,,"✅ Texas def. Brigham Young 79–71 (#11 over #6) — UPSET. Model picked Texas at 68% confidence — correct.
-Brigham Young actually shot better (47% vs 43%), but Texas's overall play told a different story. The model pre-game read held up despite the shooting numbers.
-Model was only 67% here but won by 8 — the actual performance was more one-sided than expected. Worth checking whether this team's metrics are underrated.",47,36,50,40,16,9,14,6,5,37,34,43,18,79,31,8,7,6,6,4,46,33
-401856492,20260319,R64,South,Saint Mary's,Texas A&M,Texas A&M,Saint Mary's,50,63,Saint Mary's,0.788,False,False,10,7,Dangerous,Dangerous,,,"❌ Texas A&M def. Saint Mary's 63–50 (#10 over #7) — UPSET. Model picked Saint Mary's at 79% confidence — missed.
-Texas A&M's FG% edge (38% vs 44%) was the clearest separator — a 13-point tournament win with that kind of efficiency suggests the actual performance outpaced what the model saw pre-game.
-A 78%-confidence miss by 13 points is meaningful feedback — the model may be overweighting seed or pre-game metrics in this round.",44,35,69,31,9,10,15,12,1,26,24,38,43,36,32,11,18,8,5,3,37,26
-401856479,20260319,R64,East,Ohio State,Texas Christian,Texas Christian,Ohio State,64,66,Ohio State,0.62,False,False,9,8,Dangerous,Dangerous,,,"❌ Texas Christian def. Ohio State 66–64 (#9 over #8). Model picked Ohio State at 62% confidence — missed.
-Both teams shot similarly (42% vs 40%) and it came down to 2 points — games this tight often turn on late free throws or a single possession. A loss this close does not necessarily mean the models read was wrong.
-Lost by 2 — within the noise floor of tournament basketball. Do not over-correct. A game this tight on a different night could easily flip.",40,39,64,38,12,7,12,4,4,24,40,42,26,91,32,6,7,18,4,3,39,27
+401856478,20260319,R64,,Duke,Siena,Duke,Siena,71,65,Duke,0.977,True,False,1,0,,,,,,38,35,100,31,11,6,15,5,2,32,39,41,19,86,43,16,8,11,3,3,43,22
+401856486,20260319,R64,,Michigan,Howard,Michigan,Howard,101,80,Michigan,0.983,True,False,1,0,,,,,,43,48,71,23,7,8,14,3,0,50,51,67,46,80,35,4,10,27,4,8,46,34
+401856493,20260319,R64,,Houston,Idaho,Houston,Idaho,78,47,Houston,0.992,True,False,2,0,,,,,,29,20,60,32,7,9,8,5,5,48,30,50,53,73,47,8,7,10,8,1,24,23
+401856483,20260319,R64,,Michigan State,North Dakota State,Michigan State,North Dakota State,92,67,Michigan State,0.964,True,False,6,0,,,,,,44,24,65,23,4,12,13,6,1,45,47,59,50,89,35,4,12,26,5,6,25,42
+401856491,20260319,R64,,Illinois,Pennsylvania,Illinois,Pennsylvania,105,70,Illinois,0.979,True,False,4,0,,,,,,45,30,50,25,7,8,13,2,3,40,65,50,42,76,48,20,3,15,2,2,30,40
+401856485,20260319,R64,,Gonzaga,Kennesaw State,Gonzaga,Kennesaw State,73,64,Gonzaga,0.972,True,False,6,0,,,,,,36,18,73,34,11,11,7,9,4,33,40,40,17,87,45,16,10,17,7,5,27,37
+401856489,20260319,R64,,Nebraska,Troy,Nebraska,Troy,76,47,Troy,0.632,False,False,0,13,,Underseeded,,,,28,29,93,33,9,17,11,5,2,41,35,43,36,100,37,13,6,20,10,1,25,22
+401856481,20260319,R64,,Arkansas,Hawaii,Arkansas,Hawaii,97,78,Arkansas,0.992,True,False,7,0,,,,,,45,33,55,31,11,12,15,5,2,54,43,54,19,88,41,12,10,26,8,5,36,42
+401856480,20260319,R64,,Wisconsin,High Point,High Point,Wisconsin,82,83,Wisconsin,0.854,False,True,13,3,,,,,,42,38,67,40,13,6,18,6,5,41,41,48,39,92,37,6,10,17,2,4,39,44
+401856488,20260319,R64,,Vanderbilt,McNeese State,Vanderbilt,McNeese State,78,68,Vanderbilt,0.611,True,False,10,15,,,,,,36,35,100,34,16,6,11,9,5,38,40,51,38,85,37,9,13,15,3,3,35,33
+401856482,20260319,R64,,Louisville,Florida,Louisville,Florida,83,79,Florida,0.924,False,False,0,1,,,,,,39,15,88,37,18,9,14,15,3,37,46,54,52,56,41,11,22,17,5,3,27,52
+401856490,20260319,R64,,North Carolina,VCU,VCU,North Carolina,78,82,North Carolina,0.937,False,False,0,4,,,,,,45,42,69,39,7,10,12,5,5,39,36,41,28,60,44,11,8,18,8,1,28,47
+401856484,20260319,R64,,BYU,Texas,Texas,BYU,71,79,Texas,0.991,True,True,11,5,,,,,,47,36,50,40,16,9,14,6,5,37,34,43,18,79,31,8,7,6,6,4,46,33
+401856492,20260319,R64,,Saint Marys CA,Texas A&M,Texas A&M,Saint Marys CA,50,63,Texas A&M,0.58,True,False,3,5,,,,,,44,35,69,31,9,10,15,12,1,26,24,38,43,36,32,11,18,8,5,3,37,26
+401856479,20260319,R64,,Ohio State,TCU,TCU,Ohio State,64,66,Ohio State,0.5,False,False,0,0,,,,,,40,39,64,38,12,7,12,4,4,24,40,42,26,91,32,6,7,18,4,3,39,27
+401856487,20260319,R64,,Georgia,Saint Louis,Saint Louis,Georgia,77,102,Georgia,0.99,False,False,0,8,,,,,,58,32,82,47,11,13,27,8,6,32,45,35,26,65,36,15,11,9,9,4,49,53
+401856529,20260320,R64,,Arizona,Long Island University,Arizona,Long Island University,92,58,Arizona,0.982,True,False,1,0,,,,,,32,30,60,31,12,11,15,6,5,53,39,53,46,67,52,16,10,16,4,10,29,29
+401856523,20260320,R64,,Florida,Prairie View A&M,Florida,Prairie View A&M,114,55,Florida,0.924,True,False,1,0,,,,,,27,27,88,20,9,7,6,3,3,60,54,64,45,78,54,16,7,29,4,7,21,34
+401856524,20260320,R64,,Iowa State,Tennessee,Iowa State,Tennessee,108,74,Iowa State,0.68,True,False,2,5,,,,,,43,24,68,29,11,16,14,8,9,55,53,53,46,78,43,18,11,24,9,5,29,45
+401856519,20260320,R64,,Purdue,Queens University Royals,Purdue,Queens University Royals,104,71,Purdue,0.975,True,False,3,0,,,,,,46,28,80,19,8,8,20,10,3,45,59,63,58,67,41,15,12,24,5,6,33,38
+401856497,20260320,R64,,Connecticut,Furman,Connecticut,Furman,82,71,Connecticut,0.924,True,False,2,14,,,,,,45,38,77,23,4,11,14,3,3,40,42,49,20,72,44,18,9,22,7,1,36,35
+401856526,20260320,R64,,Virginia,Wright State,Virginia,Wright State,82,73,Virginia,0.975,True,False,9,0,,,,,,41,42,91,24,8,7,11,8,4,38,44,52,50,93,39,10,14,12,4,5,43,30
+401856521,20260320,R64,,Alabama,Hofstra,Alabama,Hofstra,90,70,Alabama,0.992,True,False,2,0,,,,,,41,46,60,34,13,12,12,6,3,37,53,48,33,74,46,17,10,16,6,6,35,35
+401856495,20260320,R64,,Kansas,California Baptist,Kansas,California Baptist,68,60,Kansas,0.982,True,False,4,0,,,,,,36,24,53,42,12,8,5,6,2,38,30,40,21,86,41,10,8,8,5,4,18,42
+401856520,20260320,R64,,Texas Tech,Akron,Texas Tech,Akron,91,71,Texas Tech,0.782,True,False,6,13,,,,,,43,26,80,25,11,9,12,5,4,40,51,64,55,63,32,7,10,17,9,5,35,36
+401856494,20260320,R64,,St. Johns,Northern Iowa Panthers,St. Johns,Northern Iowa Panthers,79,53,St. Johns,0.992,True,False,3,0,,,,,,39,21,50,29,6,6,8,6,2,47,32,47,34,68,45,12,8,13,3,6,28,25
+401856527,20260320,R64,,Tennessee,Miami (OH) RedHawks,Tennessee,Miami (OH) RedHawks,78,56,Tennessee,0.884,True,False,5,0,,,,,,35,24,79,25,8,12,8,8,3,51,27,53,45,70,42,13,16,19,5,2,32,24
+401856525,20260320,R64,,Kentucky,Santa Clara,Kentucky,Santa Clara,89,84,Kentucky,0.967,True,False,6,0,,,,,,41,36,92,38,12,7,17,8,2,29,44,51,36,71,40,9,11,19,5,11,31,42
+401856496,20260320,R64,,UCLA,UCF Knights,UCLA,UCF Knights,75,71,UCLA,0.991,True,False,5,0,,,,,,38,38,31,53,25,17,15,3,2,35,40,40,29,72,41,15,8,11,13,9,27,44
+401856518,20260320,R64,,Miami,Missouri,Miami,Missouri,80,66,Missouri,0.84,False,False,0,10,,,,,,35,36,89,30,7,9,16,5,5,27,53,43,46,59,46,16,9,19,7,2,26,40
+401856528,20260320,R64,,Villanova,Utah State,Utah State,Villanova,76,86,Villanova,0.5,False,False,0,0,,,,,,55,13,78,37,9,9,19,4,0,39,37,44,47,46,27,10,9,16,6,0,37,49
+401856522,20260320,R64,,Clemson,Iowa,Iowa,Clemson,61,67,Clemson,0.5,False,False,0,0,,,,,,38,28,77,40,15,8,5,3,1,25,36,41,35,67,27,10,3,12,4,2,32,35
