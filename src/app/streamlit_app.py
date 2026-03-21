@@ -1189,32 +1189,36 @@ def predict_final_score(t1_name, t2_name, bkt_df, tournament_factor=0.975):
         model_spread = 25.0 if model_wp >= 0.999 else -25.0
     model_spread = max(-25.0, min(25.0, model_spread))
 
-    # --- Tossup tiebreaker: when model is near-even, use matchup metrics ---
-    # Near-ties (< 1 pt spread) should never produce a tie — lean on tossup data.
+    # --- Tossup tiebreaker: enforce minimum spread, never contradict model ---
+    # When the model has ANY lean, respect its direction — the bracket already
+    # shows that pick and the model is proven at 81%. Tossup only picks the
+    # winner when contender_scores are exactly equal (true 50/50).
     if abs(model_spread) < 1.0:
-        tossup = compute_tossup_scorecard(t1_name, t2_name, bkt_df)
-        if tossup:
-            # Primary: weighted tossup metric advantages (TO margin, 3PT def, etc.)
-            wt_diff = tossup["t1_wt"] - tossup["t2_wt"]
-            lean = wt_diff
-            if lean == 0:
-                # Secondary: recent form (last 10 games) + clutch factor
-                last10_diff = tossup["t1_last10"] - tossup["t2_last10"]
-                clutch_diff = tossup["t1_clutch"] - tossup["t2_clutch"]
-                lean = (last10_diff * 10) + clutch_diff
-            if lean == 0:
-                # Tertiary: coaching experience in the tournament
-                if tossup["coach_edge"] == t1_name:
-                    lean = 1
-                elif tossup["coach_edge"] == t2_name:
-                    lean = -1
-            if lean == 0:
-                # Final fallback: lower seed (higher-seeded team gets the edge)
-                seed1 = safe_f(r1.get("seed", 16))
-                seed2 = safe_f(r2.get("seed", 16))
-                lean = 1 if seed1 < seed2 else -1
-            # Set minimum 1-pt spread in the lean direction
-            if lean > 0:
+        if model_spread == 0.0:
+            # True tie (identical contender_scores): use tossup to pick winner
+            tossup = compute_tossup_scorecard(t1_name, t2_name, bkt_df)
+            if tossup:
+                wt_diff = tossup["t1_wt"] - tossup["t2_wt"]
+                lean = wt_diff
+                if lean == 0:
+                    last10_diff = tossup["t1_last10"] - tossup["t2_last10"]
+                    clutch_diff = tossup["t1_clutch"] - tossup["t2_clutch"]
+                    lean = (last10_diff * 10) + clutch_diff
+                if lean == 0:
+                    if tossup["coach_edge"] == t1_name:
+                        lean = 1
+                    elif tossup["coach_edge"] == t2_name:
+                        lean = -1
+                if lean == 0:
+                    seed1 = safe_f(r1.get("seed", 16))
+                    seed2 = safe_f(r2.get("seed", 16))
+                    lean = 1 if seed1 < seed2 else -1
+                model_spread = 1.0 if lean > 0 else -1.0
+            else:
+                model_spread = 1.0  # fallback
+        else:
+            # Model has a slight lean: keep its direction, just enforce 1-pt min
+            if model_spread > 0:
                 model_spread = max(1.0, model_spread)
             else:
                 model_spread = min(-1.0, model_spread)
