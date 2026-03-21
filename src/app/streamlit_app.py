@@ -394,6 +394,60 @@ def run_monte_carlo_sim(r32_pairs_frozen, score_lkp_frozen, n=500_000):
     return {team_set[i]: float(s16_counts[i]) / n for i in range(n_teams)}
 
 
+def _tossup_edge(t1_name, t2_name, bkt_df):
+    """Return tossup-based score adjustment for close matchups.
+
+    Positive = t1 edge, negative = t2 edge. Magnitude 0-3 pts.
+    Uses efficiency margin, defense score, turnover discipline,
+    off rebounding, clutch score, and guard play — the metrics
+    that decide close tournament games.
+    """
+    r1 = bkt_df[bkt_df["team"] == t1_name]
+    r2 = bkt_df[bkt_df["team"] == t2_name]
+    if len(r1) == 0 or len(r2) == 0:
+        return 0.0
+    r1, r2 = r1.iloc[0], r2.iloc[0]
+
+    edge = 0.0
+    # Efficiency margin (adj_off - adj_def) — strongest predictor
+    em1 = safe_f(r1.get("adj_offense")) - safe_f(r1.get("adj_defense"))
+    em2 = safe_f(r2.get("adj_offense")) - safe_f(r2.get("adj_defense"))
+    if em1 != em2:
+        edge += 0.6 if em1 > em2 else -0.6
+
+    # Defense score composite (higher = better) — replaces empty opp_three_pt_pct
+    ds1 = safe_f(r1.get("defense_score"))
+    ds2 = safe_f(r2.get("defense_score"))
+    if ds1 != ds2:
+        edge += 0.5 if ds1 > ds2 else -0.5
+
+    # Turnover discipline (lower turnover_pct = fewer giveaways = better)
+    tp1 = safe_f(r1.get("turnover_pct"))
+    tp2 = safe_f(r2.get("turnover_pct"))
+    if tp1 > 0 and tp2 > 0 and tp1 != tp2:
+        edge += 0.4 if tp1 < tp2 else -0.4
+
+    # Off rebounding (higher = better second-chance points)
+    orb1 = safe_f(r1.get("off_rebound_pct"))
+    orb2 = safe_f(r2.get("off_rebound_pct"))
+    if orb1 != orb2:
+        edge += 0.3 if orb1 > orb2 else -0.3
+
+    # Clutch score (higher = better in close games)
+    cl1 = safe_f(r1.get("clutch_score"))
+    cl2 = safe_f(r2.get("clutch_score"))
+    if cl1 != cl2:
+        edge += 0.2 if cl1 > cl2 else -0.2
+
+    # Guard play score (higher = better ball-handling under pressure)
+    gp1 = safe_f(r1.get("guard_play_score"))
+    gp2 = safe_f(r2.get("guard_play_score"))
+    if gp1 != gp2:
+        edge += 0.2 if gp1 > gp2 else -0.2
+
+    return edge
+
+
 def build_round_matchups(bkt_df):
     """Return matchups for every round as a dict: round → list of (t1, t2, winner, loser, region)."""
     rounds = {"R64": [], "R32": [], "S16": [], "E8": [], "FF": [], "Championship": []}
@@ -402,7 +456,15 @@ def build_round_matchups(bkt_df):
     def pwin(t1, t2):
         if not t1: return t2, t1
         if not t2: return t1, t2
-        p = win_prob_sigmoid(score_lkp.get(t1, 50), score_lkp.get(t2, 50))
+        s1, s2 = score_lkp.get(t1, 50), score_lkp.get(t2, 50)
+        p = win_prob_sigmoid(s1, s2)
+        # For close games (50-68%), tossup metrics break the tie
+        if 0.32 < p < 0.68:
+            tossup_adj = _tossup_edge(t1, t2, bkt_df)
+            # Add tossup as a score adjustment (each point of edge ≈ shift in win prob)
+            adj_s1 = s1 + tossup_adj
+            adj_s2 = s2 - tossup_adj
+            p = win_prob_sigmoid(adj_s1, adj_s2)
         return (t1, t2) if p >= 0.5 else (t2, t1)
 
     PODS = [
@@ -521,6 +583,10 @@ def build_bracket_live(bkt_df, recap_df, adapted_scores=None):
                     "completed": False, "model_correct": None}
         c1 = score_lkp.get(t1, 50); c2 = score_lkp.get(t2, 50)
         p1 = win_prob_sigmoid(c1, c2)
+        # For close games, add tossup edge to improve pick accuracy
+        if 0.32 < p1 < 0.68:
+            te = _tossup_edge(t1, t2, bkt_df)
+            p1 = win_prob_sigmoid(c1 + te, c2 - te)
         mw  = t1 if p1 >= 0.5 else t2
         ml  = t2 if p1 >= 0.5 else t1
         mwp = max(p1, 1 - p1)
