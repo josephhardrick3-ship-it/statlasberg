@@ -41,11 +41,6 @@ scores_merged = scores_df.merge(
 in_bracket = scores_merged[scores_merged['seed'].notna()].copy()
 in_bracket['seed'] = in_bracket['seed'].astype(int)
 
-# Score lookup: ALL teams in team_scores (so VCU/Virginia Commonwealth etc. get real scores)
-score_lkp = dict(zip(scores_df['team'], scores_df['contender_score'].apply(lambda x: safe_f(x, 50))))
-seed_lkp  = dict(zip(in_bracket['team'], in_bracket['seed']))
-bracket_teams = set(in_bracket['team'])
-
 flag_lkp = {}
 for _, r in in_bracket.iterrows():
     t = str(r['team'])
@@ -56,14 +51,32 @@ for _, r in in_bracket.iterrows():
     if r.get('underseeded_flag'):    flags.append('Underseeded')
     flag_lkp[t] = ', '.join(flags)
 
-print(f"Loaded {len(in_bracket)} seeded teams | {len(score_lkp)} total score entries")
-
 # Seed → estimated contender score fallback for teams not in scores file at all
 SEED_FALLBACK = {
     1: 79, 2: 74, 3: 71, 4: 68, 5: 65,
     6: 63, 7: 61, 8: 58, 9: 56, 10: 54,
     11: 52, 12: 49, 13: 46, 14: 43, 15: 38, 16: 30,
 }
+
+# Inject bracket teams not in team_scores (e.g., Miami OH — play-in winners without a scores entry).
+# Mirrors the app's injection logic so model picks use seed-fallback for play-in challengers.
+_in_bkt_set = set(in_bracket['team'])
+_inject = []
+for _, _br in bracket_df.iterrows():
+    t = norm_bracket_name(str(_br['team']))
+    if pd.notna(_br.get('seed')) and t not in _in_bkt_set:
+        _inject.append({'team': t, 'region': _br.get('region', ''),
+                        'seed': int(_br['seed']),
+                        'contender_score': SEED_FALLBACK.get(int(_br['seed']), 50)})
+if _inject:
+    in_bracket = pd.concat([in_bracket, pd.DataFrame(_inject)], ignore_index=True)
+
+# Score lookup: BRACKET TEAMS ONLY — mirrors app's in_bracket score_lkp so model picks
+# use seed-fallback for play-in challengers not in the bracket (e.g., NC State vs Texas seed 11)
+score_lkp = dict(zip(in_bracket['team'], in_bracket['contender_score'].apply(lambda x: safe_f(x, 50))))
+seed_lkp  = dict(zip(in_bracket['team'], in_bracket['seed']))
+bracket_teams = set(in_bracket['team'])
+print(f"Loaded {len(in_bracket)} seeded teams | {len(score_lkp)} bracket score entries")
 
 def score_for(team, espn_seed):
     if team in score_lkp:
@@ -148,6 +161,11 @@ NORM = {
     "Florida State Seminoles":       "Florida State",
     "Florida Atlantic Owls":         "Florida Atlantic",
     "Miami (OH) RedHawks":           "Miami OH",
+    "Miami Ohio RedHawks":           "Miami OH",
+    "Miami Ohio":                    "Miami OH",
+    "Miami (Ohio)":                  "Miami OH",
+    "Miami Redhawks":                "Miami OH",
+    "Miami OH Redhawks":             "Miami OH",
     "Northern Iowa Panthers":        "Northern Iowa",
 }
 
@@ -195,7 +213,7 @@ def fetch_box(eid):
         return {}
 
 TOURNEY_DATES = [
-    '20260318',
+    '20260317', '20260318',
     '20260319', '20260320', '20260321', '20260322', '20260323',
     '20260324', '20260325', '20260327', '20260328', '20260329',
     '20260330', '20260404', '20260405', '20260407',

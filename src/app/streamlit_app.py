@@ -811,6 +811,11 @@ _BRACKET_NORM = {
     "Florida Atlantic Owls": "Florida Atlantic",
     "Western Kentucky Hilltoppers": "Western Kentucky",
     "Miami (OH) RedHawks": "Miami OH",
+    "Miami Ohio RedHawks": "Miami OH",
+    "Miami Ohio": "Miami OH",
+    "Miami (Ohio)": "Miami OH",
+    "Miami Redhawks": "Miami OH",
+    "Miami OH Redhawks": "Miami OH",
     "Northern Iowa Panthers": "Northern Iowa",
 }
 
@@ -1676,7 +1681,7 @@ _NCAA_SCOREBOARD = (
 
 
 _TOURNEY_DATES = [
-    "20260318",
+    "20260317","20260318",
     "20260319","20260320","20260321","20260322","20260323",
     "20260324","20260325","20260327","20260328","20260329",
     "20260330","20260404","20260405","20260407",
@@ -1691,16 +1696,20 @@ def fetch_all_tournament_games(bracket_teams):
     seen = {}
 
     def _norm(raw_name, bt_set):
-        # 1. Exact lookup in normalization dict first
-        n = _BRACKET_NORM.get(raw_name, raw_name)
-        if n in bt_set:
+        # 1. Explicit _BRACKET_NORM mapping always wins — skip bt_set check and fuzzy
+        #    so "Miami (OH) RedHawks" → "Miami OH" even if bt_set has stale entries
+        n = _BRACKET_NORM.get(raw_name)
+        if n is not None:
             return n
-        # 2. Fuzzy substring match — prefer LONGEST matching bracket name to avoid
+        # 2. Exact match in bracket set
+        if raw_name in bt_set:
+            return raw_name
+        # 3. Fuzzy substring match — prefer LONGEST matching bracket name to avoid
         #    "Michigan" matching "Michigan State Spartans" before "Michigan State"
         matches = [bt for bt in bt_set if bt.lower() in raw_name.lower() or raw_name.lower() in bt.lower()]
         if matches:
             return max(matches, key=len)  # longest = most specific
-        return n
+        return raw_name
 
     for d in _TOURNEY_DATES:
         if d > today_str:

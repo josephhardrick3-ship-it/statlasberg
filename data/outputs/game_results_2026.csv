@@ -1,6 +1,8 @@
 event_id,date,round,region,t1,t2,winner,loser,t1_score,t2_score,model_pick,model_conf,correct,upset,winner_seed,loser_seed,winner_flags,loser_flags,winner_hot,loser_hot,narrative,t1_fg_pct,t1_fg3_pct,t1_ft_pct,t1_rebounds,t1_off_reb,t1_turnovers,t1_assists,t1_steals,t1_blocks,t1_h1,t1_h2,t2_fg_pct,t2_fg3_pct,t2_ft_pct,t2_rebounds,t2_off_reb,t2_turnovers,t2_assists,t2_steals,t2_blocks,t2_h1,t2_h2
-401856436,20260318,FF4,,Southern Methodist,Miami OH,Miami OH,Southern Methodist,79,89,Southern Methodist,0.905,False,False,11,11,,,,,,45,39,68,35,12,4,20,4,2,34,45,48,24,80,35,12,6,15,4,0,43,46
-401856437,20260318,FF4,,Lehigh,Prairie View,Prairie View,Lehigh,55,67,Prairie View,0.585,True,False,16,16,,,,,,47,33,83,34,7,9,5,12,9,29,26,36,25,58,39,14,16,11,5,1,27,40
+401856434,20260317,FF4,,North Carolina State,Texas,Texas,North Carolina State,66,68,Texas,0.929,True,False,11,11,Dangerous,,,,,37,29,72,45,15,12,10,7,5,29,37,39,38,78,33,7,7,10,8,5,30,38
+401856435,20260317,FF4,,Howard,UMBC Retrievers,Howard,UMBC Retrievers,86,83,Howard,0.946,True,False,16,16,,,,,,52,41,67,32,6,9,11,6,2,49,37,48,48,72,38,12,8,14,3,1,41,42
+401856436,20260318,FF4,,Southern Methodist,Miami OH,Miami OH,Southern Methodist,79,89,Southern Methodist,0.5,False,False,11,11,,,,,,45,39,68,35,12,4,20,4,2,34,45,48,24,80,35,12,6,15,4,0,43,46
+401856437,20260318,FF4,,Lehigh Mountain Hawks,Prairie View,Prairie View,Lehigh Mountain Hawks,55,67,Prairie View,0.822,True,False,16,16,,,,,,47,33,83,34,7,9,5,12,9,29,26,36,25,58,39,14,16,11,5,1,27,40
 401856478,20260319,R64,,Duke,Siena,Duke,Siena,71,65,Duke,0.957,True,False,1,16,,,,,,38,35,100,31,11,6,15,5,2,32,39,41,19,86,43,16,8,11,3,3,43,22
 401856486,20260319,R64,,Michigan,Howard,Michigan,Howard,101,80,Michigan,0.992,True,False,1,16,,,,,,43,48,71,23,7,8,14,3,0,50,51,67,46,80,35,4,10,27,4,8,46,34
 401856493,20260319,R64,,Houston,Idaho,Houston,Idaho,78,47,Houston,0.982,True,False,2,15,,Underseeded,,,,29,20,60,32,7,9,8,5,5,48,30,50,53,73,47,8,7,10,8,1,24,23
