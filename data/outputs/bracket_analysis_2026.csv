@@ -32,8 +32,8 @@ season,region,seed,team,contender_score
 2026,South,15,Idaho,54.9
 2026,South,16,Prairie View,38.5
 2026,West,1,Arizona,72.3
-2026,West,2,Alabama,76.5
-2026,West,3,Purdue,70.3
+2026,West,2,Purdue,70.3
+2026,West,3,Gonzaga,69.8
 2026,West,4,Arkansas,76.7
 2026,West,5,Wisconsin,71.3
 2026,West,6,Brigham Young,68.7
@@ -44,13 +44,13 @@ season,region,seed,team,contender_score
 2026,West,11,Texas,66.3
 2026,West,12,High Point,61.5
 2026,West,13,Hawaii,55.3
-2026,West,14,Queens,56.4
-2026,West,15,Hofstra,63.3
+2026,West,14,Kennesaw State,44.8
+2026,West,15,Queens,56.4
 2026,West,16,Long Island University,53.6
 2026,Midwest,1,Michigan,72.6
 2026,Midwest,2,Iowa State,65.5
 2026,Midwest,3,Virginia,70.3
-2026,Midwest,4,Gonzaga,69.8
+2026,Midwest,4,Alabama,76.5
 2026,Midwest,5,Texas Tech,69.7
 2026,Midwest,6,Tennessee,61.3
 2026,Midwest,7,Kentucky,68.8
@@ -59,7 +59,7 @@ season,region,seed,team,contender_score
 2026,Midwest,10,Santa Clara,66.0
 2026,Midwest,11,Miami OH,52.0
 2026,Midwest,12,Akron,62.6
-2026,Midwest,13,Kennesaw State,44.8
+2026,Midwest,13,Hofstra,63.3
 2026,Midwest,14,Wright State,56.2
 2026,Midwest,15,Tennessee State,52.2
 2026,Midwest,16,Howard,45.9

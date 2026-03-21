@@ -357,11 +357,11 @@ def compute_user_bracket(bkt_df, picks):
 
 @st.cache_data(ttl=600, show_spinner=False)
 def run_monte_carlo_sim(r32_pairs_frozen, score_lkp_frozen, n=500_000):
-    """Vectorized 500K Monte Carlo simulation from R32 through Championship.
+    """Vectorized 500K Monte Carlo simulation from R32.
 
     r32_pairs_frozen: tuple of 16 (t1, t2) pairs in region order
       [East×4, South×4, West×4, Midwest×4] with adjacent pairs forming S16 matchups.
-    Returns dict: team → championship win probability.
+    Returns dict: team → Sweet 16 advancement probability.
     """
     r32_pairs = list(r32_pairs_frozen)
     slkp      = dict(score_lkp_frozen)
@@ -389,31 +389,9 @@ def run_monte_carlo_sim(r32_pairs_frozen, score_lkp_frozen, n=500_000):
     r32_rng = np.random.random((n, len(valid)))
     r32_win = np.where(r32_rng < r32_p, r32_t1, r32_t2)  # (n, 16) - winners as ints
 
-    # ── S16: adjacent pairs of R32 winners ───────────────────────────────────
-    s16_t1 = r32_win[:, 0::2]                             # (n, 8)
-    s16_t2 = r32_win[:, 1::2]                             # (n, 8)
-    s16_p  = prob_mat[s16_t1, s16_t2]                    # (n, 8) advanced indexing
-    s16_win = np.where(np.random.random((n, 8)) < s16_p, s16_t1, s16_t2)  # (n, 8)
-
-    # ── E8: adjacent pairs of S16 winners ────────────────────────────────────
-    e8_t1 = s16_win[:, 0::2]                              # (n, 4) — one per region
-    e8_t2 = s16_win[:, 1::2]                              # (n, 4)
-    e8_p  = prob_mat[e8_t1, e8_t2]
-    e8_win = np.where(np.random.random((n, 4)) < e8_p, e8_t1, e8_t2)  # (n, 4)
-    # Columns: East(0), South(1), West(2), Midwest(3)
-
-    # ── FF: East vs Midwest (cols 0,3), South vs West (cols 1,2) ─────────────
-    ff_t1 = e8_win[:, [0, 1]]                             # (n, 2)
-    ff_t2 = e8_win[:, [3, 2]]
-    ff_p  = prob_mat[ff_t1, ff_t2]
-    ff_win = np.where(np.random.random((n, 2)) < ff_p, ff_t1, ff_t2)  # (n, 2)
-
-    # ── Championship ─────────────────────────────────────────────────────────
-    ch_p   = prob_mat[ff_win[:, 0], ff_win[:, 1]]
-    champs = np.where(np.random.random(n) < ch_p, ff_win[:, 0], ff_win[:, 1])
-
-    counts = np.bincount(champs, minlength=n_teams)
-    return {team_set[i]: float(counts[i]) / n for i in range(n_teams) if counts[i] > 0}
+    # ── S16 advancement: count how often each team wins their R32 game ────────
+    s16_counts = np.bincount(r32_win.flatten(), minlength=n_teams)
+    return {team_set[i]: float(s16_counts[i]) / n for i in range(n_teams)}
 
 
 def build_round_matchups(bkt_df):
@@ -1698,6 +1676,7 @@ _NCAA_SCOREBOARD = (
 
 
 _TOURNEY_DATES = [
+    "20260318",
     "20260319","20260320","20260321","20260322","20260323",
     "20260324","20260325","20260327","20260328","20260329",
     "20260330","20260404","20260405","20260407",
@@ -1742,6 +1721,9 @@ def fetch_all_tournament_games(bracket_teams):
                 status_type = event.get("status", {}).get("type", {})
                 if not status_type.get("completed", False):
                     continue
+                headline = comp.get("notes", [{}])[0].get("headline", "")
+                if "NIT" in headline or "CBI" in headline or "CIT" in headline:
+                    continue
                 t1c = comps[0]; t2c = comps[1]
                 t1_name = _norm(t1c.get("team", {}).get("displayName", ""), bracket_teams)
                 t2_name = _norm(t2c.get("team", {}).get("displayName", ""), bracket_teams)
@@ -1755,7 +1737,6 @@ def fetch_all_tournament_games(bracket_teams):
                 t2_espn_seed = t2c.get("curatedRank", {}).get("current", 0) or 0
                 winner = t1_name if t1_score >= t2_score else t2_name
                 loser  = t2_name if t1_score >= t2_score else t1_name
-                headline = comp.get("notes", [{}])[0].get("headline", "")
                 box = fetch_game_box_score(eid)
                 seen[eid] = {
                     "event_id": eid, "date": d,
@@ -2272,9 +2253,9 @@ with tab5:
                 n=500_000
             )
             if _mc_probs:
-                _mc_sorted = sorted(_mc_probs.items(), key=lambda x: x[1], reverse=True)[:16]
-                st.markdown('<div class="section-header">🎲 500,000-Game Simulation — Championship Odds</div>', unsafe_allow_html=True)
-                st.caption("Simulated from Round of 32 using adapted model scores. Probabilities update as results come in.")
+                _mc_sorted = sorted(_mc_probs.items(), key=lambda x: x[1], reverse=True)
+                st.markdown('<div class="section-header">🎲 500,000-Game Simulation — Sweet 16 Advancement Odds</div>', unsafe_allow_html=True)
+                st.caption("How often each team advances to the Sweet 16 across 500K simulations. Sorted by probability.")
                 _mc_cols = st.columns(4)
                 for _mci, (_mct, _mcp) in enumerate(_mc_sorted):
                     _col = _mc_cols[_mci % 4]
@@ -2282,12 +2263,13 @@ with tab5:
                         _bar_w = int(_mcp * 100)
                         _seed_r = in_bracket[in_bracket["team"] == _mct]["seed"].values
                         _seed_d = int(_seed_r[0]) if len(_seed_r) else "?"
+                        _bar_color = "#22c55e" if _mcp >= 0.5 else "#f97316" if _mcp >= 0.3 else "#64748b"
                         st.markdown(
                             f'<div style="background:#0f1419;border:1px solid #1e293b;border-radius:6px;padding:6px 10px;margin:3px 0">'
                             f'<div style="color:#f1f5f9;font-weight:700;font-size:0.82rem">#{_seed_d} {_mct}</div>'
                             f'<div style="background:#1e293b;border-radius:3px;height:5px;margin:4px 0">'
-                            f'<div style="width:{_bar_w}%;background:#f97316;height:5px;border-radius:3px"></div></div>'
-                            f'<div style="color:#f97316;font-size:0.78rem;font-weight:600">{_mcp*100:.1f}%</div>'
+                            f'<div style="width:{_bar_w}%;background:{_bar_color};height:5px;border-radius:3px"></div></div>'
+                            f'<div style="color:{_bar_color};font-size:0.78rem;font-weight:600">{_mcp*100:.1f}%</div>'
                             f'</div>', unsafe_allow_html=True)
                 st.markdown("---")
 
@@ -4125,7 +4107,7 @@ with tab8:
             '<div style="font-size:3rem">🏀</div>'
             '<div style="font-size:1.2rem;font-weight:700;color:#94a3b8;margin-top:12px">No completed games yet</div>'
             '<div style="margin-top:8px">Check back once tournament games are underway.<br/>'
-            'First Four tips off March 19 — Round of 64 begins March 20.</div>'
+            'First Four tips off March 18 — Round of 64 begins March 19.</div>'
             '</div>', unsafe_allow_html=True)
     else:
         # ── Normalize dtypes from CSV (booleans come back as strings) ──────────

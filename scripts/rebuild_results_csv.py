@@ -195,6 +195,7 @@ def fetch_box(eid):
         return {}
 
 TOURNEY_DATES = [
+    '20260318',
     '20260319', '20260320', '20260321', '20260322', '20260323',
     '20260324', '20260325', '20260327', '20260328', '20260329',
     '20260330', '20260404', '20260405', '20260407',
@@ -219,6 +220,9 @@ for d in TOURNEY_DATES:
             continue
         completed = event.get('status', {}).get('type', {}).get('completed', False)
         if not completed:
+            continue
+        hl_raw = comp.get('notes', [{}])[0].get('headline', '')
+        if 'NIT' in hl_raw or 'CBI' in hl_raw or 'CIT' in hl_raw:
             continue
         t1c = comps[0]; t2c = comps[1]
         t1n = norm(t1c.get('team', {}).get('displayName', ''))
