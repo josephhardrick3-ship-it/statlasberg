@@ -935,6 +935,10 @@ if "eye_test_notes" not in st.session_state:
     st.session_state.eye_test_notes = {}
 if "user_bracket_picks" not in st.session_state:
     st.session_state.user_bracket_picks = {}
+if "predict_t1" not in st.session_state:
+    st.session_state.predict_t1 = None
+if "predict_t2" not in st.session_state:
+    st.session_state.predict_t2 = None
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -990,11 +994,326 @@ if st.session_state.dive_team:
         st.session_state.dive_team = None
         st.rerun()
 
+if st.session_state.predict_t1 and st.session_state.predict_t2:
+    st.info(f"🎯 **{st.session_state.predict_t1}** vs **{st.session_state.predict_t2}** — click the **🎯 Score Predictor** tab to see predicted final score.", icon="👆")
+    if st.button("✖ Clear prediction", key="clear_predict"):
+        st.session_state.predict_t1 = None
+        st.session_state.predict_t2 = None
+        st.rerun()
+
+# ── Tossup Lab helpers ────────────────────────────────────────────────────────
+
+_TOSSUP_METRICS = [
+    ("Turnover Margin",  "to_margin",  True,   3),   # higher = better, weight 3
+    ("3-Point Defense",  "opp_3pt",    False,  2),   # lower = better, weight 2
+    ("Off. Rebounding",  "orb",        True,   2),   # higher = better
+    ("Free Throw Rate",  "ftr",        True,   1),   # higher = better
+    ("Tempo Control",    "tempo",      None,   1),   # gap matters, not direction
+    ("Efficiency Margin","eff_margin", True,   2),   # higher = better
+]
+
+def compute_tossup_scorecard(t1_name, t2_name, bkt_df):
+    """Compute the 6-metric tossup scorecard for two teams."""
+    r1 = bkt_df[bkt_df["team"] == t1_name]
+    r2 = bkt_df[bkt_df["team"] == t2_name]
+    if len(r1) == 0 or len(r2) == 0:
+        return None
+    r1, r2 = r1.iloc[0], r2.iloc[0]
+    # Compute raw values
+    t1_vals = {
+        "to_margin":  safe_f(r1.get("opp_turnover_pct")) - safe_f(r1.get("turnover_pct")),
+        "opp_3pt":    safe_f(r1.get("opp_three_pt_pct")),
+        "orb":        safe_f(r1.get("off_rebound_pct")),
+        "ftr":        safe_f(r1.get("ft_rate")),
+        "tempo":      safe_f(r1.get("tempo")),
+        "eff_margin": safe_f(r1.get("adj_offense")) - safe_f(r1.get("adj_defense")),
+    }
+    t2_vals = {
+        "to_margin":  safe_f(r2.get("opp_turnover_pct")) - safe_f(r2.get("turnover_pct")),
+        "opp_3pt":    safe_f(r2.get("opp_three_pt_pct")),
+        "orb":        safe_f(r2.get("off_rebound_pct")),
+        "ftr":        safe_f(r2.get("ft_rate")),
+        "tempo":      safe_f(r2.get("tempo")),
+        "eff_margin": safe_f(r2.get("adj_offense")) - safe_f(r2.get("adj_defense")),
+    }
+    metrics = []
+    t1_adv = 0; t2_adv = 0; t1_wt = 0; t2_wt = 0
+    for name, key, higher_better, weight in _TOSSUP_METRICS:
+        v1, v2 = t1_vals[key], t2_vals[key]
+        if key == "tempo":
+            # Tempo: the team closer to their preferred pace has the edge in a neutral game
+            # — just show the gap as context
+            edge_team = ""
+            metrics.append({"name": name, "t1_val": v1, "t2_val": v2, "edge": abs(v1 - v2),
+                           "edge_team": edge_team, "weight": weight, "note": f"Gap: {abs(v1-v2):.1f}"})
+            continue
+        if higher_better:
+            edge_team = t1_name if v1 > v2 else (t2_name if v2 > v1 else "")
+        else:
+            edge_team = t1_name if v1 < v2 else (t2_name if v2 < v1 else "")
+        if edge_team == t1_name:
+            t1_adv += 1; t1_wt += weight
+        elif edge_team == t2_name:
+            t2_adv += 1; t2_wt += weight
+        metrics.append({"name": name, "t1_val": v1, "t2_val": v2, "edge": abs(v1 - v2),
+                       "edge_team": edge_team, "weight": weight})
+    # Coach experience bonus
+    c1 = safe_i(r1.get("coach_ncaa_games")); c2 = safe_i(r2.get("coach_ncaa_games"))
+    coach_edge = t1_name if c1 > c2 + 5 else (t2_name if c2 > c1 + 5 else "")
+    return {"metrics": metrics, "t1_adv": t1_adv, "t2_adv": t2_adv,
+            "t1_wt": t1_wt, "t2_wt": t2_wt,
+            "coach_edge": coach_edge, "t1_coach": c1, "t2_coach": c2,
+            "t1_clutch": safe_f(r1.get("clutch_score")), "t2_clutch": safe_f(r2.get("clutch_score")),
+            "t1_last10": safe_f(r1.get("last10_win_pct")), "t2_last10": safe_f(r2.get("last10_win_pct"))}
+
+def generate_statlas_lean(t1, t2, scorecard, model_pick, model_prob, bkt_df):
+    """Synthesize model + scorecard into a tossup recommendation."""
+    if scorecard is None:
+        return model_pick, "Insufficient data for scorecard — defaulting to model pick."
+    sc_leader = t1 if scorecard["t1_wt"] > scorecard["t2_wt"] else (
+                t2 if scorecard["t2_wt"] > scorecard["t1_wt"] else "")
+    model_agrees = (model_pick == sc_leader) if sc_leader else False
+    # Check for Dangerous flag
+    r1 = bkt_df[bkt_df["team"] == t1]
+    r2 = bkt_df[bkt_df["team"] == t2]
+    t1_dangerous = bool(r1.iloc[0].get("dangerous_low_seed_flag")) if len(r1) else False
+    t2_dangerous = bool(r2.iloc[0].get("dangerous_low_seed_flag")) if len(r2) else False
+    # Strong scorecard (5-0 or better weighted)
+    wt_gap = abs(scorecard["t1_wt"] - scorecard["t2_wt"])
+    if wt_gap >= 6:
+        conf = "HIGH"
+        reason = (f"Scorecard strongly favors {sc_leader} ({scorecard['t1_adv'] if sc_leader==t1 else scorecard['t2_adv']}"
+                  f"-{scorecard['t2_adv'] if sc_leader==t1 else scorecard['t1_adv']} on key metrics).")
+    elif model_agrees and sc_leader:
+        conf = "MODERATE"
+        reason = f"Model ({model_prob*100:.0f}%) and scorecard both favor {sc_leader}."
+    elif sc_leader and not model_agrees:
+        conf = "SPLIT"
+        reason = f"Model picks {model_pick} ({model_prob*100:.0f}%) but scorecard leans {sc_leader} — watch the film."
+        # When signals disagree, flag it as a coin flip
+        lean_team = sc_leader if wt_gap >= 3 else ""
+        if not lean_team:
+            return "COIN FLIP", reason
+        return lean_team, reason
+    else:
+        return "COIN FLIP", "Model and metrics are dead even — this is a true tossup."
+    # Dangerous flag warning
+    underdog = t2 if model_pick == t1 else t1
+    if (underdog == t1 and t1_dangerous) or (underdog == t2 and t2_dangerous):
+        reason += f" ⚠️ {underdog} carries the Dangerous flag — upset risk elevated."
+    lean_team = sc_leader if sc_leader else model_pick
+    return lean_team, f"[{conf}] {reason}"
+
+def _tossup_metric_bar_html(name, t1_val, t2_val, t1_name, t2_name, higher_better=True):
+    """Horizontal comparison bar for a tossup metric."""
+    if higher_better is None:
+        # Tempo — just show values, no winner coloring
+        return (f'<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #1e293b">'
+                f'<span style="color:#94a3b8;width:140px">{name}</span>'
+                f'<span style="color:#e2e8f0">{t1_val:.1f}</span>'
+                f'<span style="color:#64748b;font-size:0.8rem">vs</span>'
+                f'<span style="color:#e2e8f0">{t2_val:.1f}</span>'
+                f'<span style="color:#64748b;width:60px;text-align:right">Gap {abs(t1_val-t2_val):.1f}</span>'
+                f'</div>')
+    if higher_better:
+        t1_wins = t1_val > t2_val; t2_wins = t2_val > t1_val
+    else:
+        t1_wins = t1_val < t2_val; t2_wins = t2_val < t1_val
+    c1 = "#4ade80" if t1_wins else ("#ef4444" if t2_wins else "#94a3b8")
+    c2 = "#4ade80" if t2_wins else ("#ef4444" if t1_wins else "#94a3b8")
+    edge_name = t1_name if t1_wins else (t2_name if t2_wins else "Even")
+    return (f'<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid #1e293b">'
+            f'<span style="color:#94a3b8;width:140px">{name}</span>'
+            f'<span style="color:{c1};font-weight:600">{t1_val:.1f}</span>'
+            f'<span style="color:#64748b;font-size:0.8rem">vs</span>'
+            f'<span style="color:{c2};font-weight:600">{t2_val:.1f}</span>'
+            f'<span style="color:{c1 if t1_wins else c2};width:60px;text-align:right;font-size:0.8rem">'
+            f'{"✓ " + edge_name if (t1_wins or t2_wins) else "—"}</span>'
+            f'</div>')
+
+# ── Score Predictor helpers ────────────────────────────────────────────────────
+
+def predict_final_score(t1_name, t2_name, bkt_df, tournament_factor=0.975):
+    """Predict final score: model picks the winner, regression sets the total.
+
+    The proven contender_score model (81% winner accuracy) determines WHO wins
+    and by how much (spread direction & magnitude). The calibrated regression
+    estimates TOTAL points. Final scores allocate the regression total using
+    the model-derived spread.
+
+    This ensures the Score Predictor never contradicts the model's proven picks.
+    """
+    # --- Regression coefficients for TOTAL estimation ---
+    # Per-team: score = PPG_COEF * ppg + PAG_COEF * opp_pag + DEF_COEF * opp_adj_def + INTERCEPT
+    # Trained on team_scores.csv (rescaled 0-100 efficiency values)
+    PPG_COEF = 1.504622
+    PAG_COEF = 0.814834
+    DEF_COEF = -0.083819
+    TEAM_INTERCEPT = -98.014121
+    # Total calibration: cal_total = TOT_COEF * raw_total + GAP_COEF * margin_gap + TOT_INTERCEPT
+    TOT_COEF = 0.866839
+    GAP_COEF = 0.655479
+    TOT_INTERCEPT = 12.821787
+
+    r1 = bkt_df[bkt_df["team"] == t1_name]
+    r2 = bkt_df[bkt_df["team"] == t2_name]
+    if len(r1) == 0 or len(r2) == 0:
+        return None
+    r1, r2 = r1.iloc[0], r2.iloc[0]
+
+    ppg1 = safe_f(r1.get("points_per_game"), 75)
+    ppg2 = safe_f(r2.get("points_per_game"), 75)
+    pag1 = safe_f(r1.get("points_allowed_per_game"), 70)
+    pag2 = safe_f(r2.get("points_allowed_per_game"), 70)
+    off1 = safe_f(r1.get("adj_offense"), 0)
+    def1 = safe_f(r1.get("adj_defense"), 0)
+    off2 = safe_f(r2.get("adj_offense"), 0)
+    def2 = safe_f(r2.get("adj_defense"), 0)
+    tempo1 = safe_f(r1.get("tempo"), 0)
+    tempo2 = safe_f(r2.get("tempo"), 0)
+    cs1 = safe_f(r1.get("contender_score", 50))
+    cs2 = safe_f(r2.get("contender_score", 50))
+
+    has_efficiency = off1 > 0 and def1 > 0 and off2 > 0 and def2 > 0
+    has_tempo = tempo1 > 0 and tempo2 > 0
+
+    # --- Winner determination: proven contender_score model (81%) ---
+    # The model accounts for SOS, conference quality, seeding, pedigree —
+    # far more reliable than raw PPG for determining who wins.
+    model_wp = win_prob_sigmoid(cs1, cs2)
+    # Convert model win probability to implied point spread
+    # k=0.15 is basketball-calibrated: 7pt ≈ 74%, 10pt ≈ 82%, 14pt ≈ 89%
+    if 0.001 < model_wp < 0.999:
+        model_spread = np.log(model_wp / (1 - model_wp)) / 0.15
+    else:
+        model_spread = 25.0 if model_wp >= 0.999 else -25.0
+    model_spread = max(-25.0, min(25.0, model_spread))
+
+    # --- Tossup tiebreaker: when model is near-even, use matchup metrics ---
+    # Near-ties (< 1 pt spread) should never produce a tie — lean on tossup data.
+    if abs(model_spread) < 1.0:
+        tossup = compute_tossup_scorecard(t1_name, t2_name, bkt_df)
+        if tossup:
+            # Primary: weighted tossup metric advantages (TO margin, 3PT def, etc.)
+            wt_diff = tossup["t1_wt"] - tossup["t2_wt"]
+            lean = wt_diff
+            if lean == 0:
+                # Secondary: recent form (last 10 games) + clutch factor
+                last10_diff = tossup["t1_last10"] - tossup["t2_last10"]
+                clutch_diff = tossup["t1_clutch"] - tossup["t2_clutch"]
+                lean = (last10_diff * 10) + clutch_diff
+            if lean == 0:
+                # Tertiary: coaching experience in the tournament
+                if tossup["coach_edge"] == t1_name:
+                    lean = 1
+                elif tossup["coach_edge"] == t2_name:
+                    lean = -1
+            if lean == 0:
+                # Final fallback: lower seed (higher-seeded team gets the edge)
+                seed1 = safe_f(r1.get("seed", 16))
+                seed2 = safe_f(r2.get("seed", 16))
+                lean = 1 if seed1 < seed2 else -1
+            # Set minimum 1-pt spread in the lean direction
+            if lean > 0:
+                model_spread = max(1.0, model_spread)
+            else:
+                model_spread = min(-1.0, model_spread)
+
+    # --- Total estimation: calibrated regression ---
+    if has_efficiency:
+        method = "regression_calibrated"
+        # Per-team regression with opponent defense quality
+        raw_t1 = PPG_COEF * ppg1 + PAG_COEF * pag2 + DEF_COEF * def2 + TEAM_INTERCEPT
+        raw_t2 = PPG_COEF * ppg2 + PAG_COEF * pag1 + DEF_COEF * def1 + TEAM_INTERCEPT
+
+        # Margin gap: quality differential between teams (drives blowout bonus)
+        adj_margin1 = off1 - def1
+        adj_margin2 = off2 - def2
+        margin_gap = abs(adj_margin1 - adj_margin2)
+    else:
+        method = "ppg_average"
+        # Fallback: simple PPG average when efficiency data unavailable
+        raw_t1 = (ppg1 + pag2) / 2
+        raw_t2 = (ppg2 + pag1) / 2
+        margin_gap = abs(ppg1 - pag1 - (ppg2 - pag2))
+
+    raw_total = raw_t1 + raw_t2
+    if has_efficiency:
+        # Calibrate total: corrects bias and adds blowout bonus
+        cal_total = TOT_COEF * raw_total + GAP_COEF * margin_gap + TOT_INTERCEPT
+    else:
+        cal_total = raw_total  # No calibration without full data
+
+    # --- Allocate calibrated total using MODEL spread (not regression) ---
+    # This ensures the predicted winner always matches the model's pick.
+    t1_sc = (cal_total + model_spread) / 2
+    t2_sc = (cal_total - model_spread) / 2
+
+    # Ensure non-negative scores
+    t1_sc = max(t1_sc, 40)
+    t2_sc = max(t2_sc, 40)
+
+    # Final anti-tie: tournament games can't end tied (displayed as integers)
+    if round(t1_sc) == round(t2_sc):
+        # Shift 0.5 from one team to the other (total unchanged, 1-pt spread)
+        if model_spread >= 0:
+            t1_sc += 0.5
+            t2_sc -= 0.5
+        else:
+            t2_sc += 0.5
+            t1_sc -= 0.5
+
+    possessions = (tempo1 + tempo2) / 2 if has_tempo else 67.5
+    margin = abs(t1_sc - t2_sc)
+    confidence_range = 6 if margin > 15 else (8 if margin > 8 else 10)
+
+    return {
+        "t1_score": round(t1_sc, 1), "t2_score": round(t2_sc, 1),
+        "possessions": round(possessions, 1),
+        "spread": round(t1_sc - t2_sc, 1), "total": round(t1_sc + t2_sc, 1),
+        "t1_off": off1, "t1_def": def1, "t2_off": off2, "t2_def": def2,
+        "t1_tempo": tempo1, "t2_tempo": tempo2,
+        "confidence_range": confidence_range, "method": method,
+    }
+
+
+def compute_prediction_accuracy(bkt_df, results_df):
+    """Compare predicted scores against actual game results for calibration."""
+    if results_df is None or results_df.empty:
+        return []
+    calibration = []
+    for _, row in results_df.iterrows():
+        t1 = str(row.get("t1", "") or "").strip()
+        t2 = str(row.get("t2", "") or "").strip()
+        actual_t1 = safe_i(row.get("t1_score"))
+        actual_t2 = safe_i(row.get("t2_score"))
+        if not t1 or not t2 or actual_t1 == 0 or actual_t2 == 0:
+            continue
+        pred = predict_final_score(t1, t2, bkt_df)
+        if pred is None:
+            continue
+        pred_winner = t1 if pred["t1_score"] > pred["t2_score"] else t2
+        actual_winner = t1 if actual_t1 > actual_t2 else t2
+        calibration.append({
+            "t1": t1, "t2": t2,
+            "pred_t1": pred["t1_score"], "pred_t2": pred["t2_score"],
+            "actual_t1": actual_t1, "actual_t2": actual_t2,
+            "pred_spread": pred["spread"],
+            "actual_spread": actual_t1 - actual_t2,
+            "spread_error": abs(pred["spread"] - (actual_t1 - actual_t2)),
+            "total_error": abs(pred["total"] - (actual_t1 + actual_t2)),
+            "pred_total": pred["total"], "actual_total": actual_t1 + actual_t2,
+            "winner_correct": pred_winner == actual_winner,
+            "round": str(row.get("round", "")),
+        })
+    return calibration
+
+
 # ── Main tabs ─────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "🏅 Rankings", "🎯 Picks", "🔍 Team Deep Dive",
     "🎲 Championship Odds", "🏆 Bracket", "📺 Live",
-    "📈 Model Accuracy", "📋 Recap"
+    "📈 Model Accuracy", "📋 Recap", "🔬 Tossup Lab", "🎯 Score Predictor"
 ])
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2194,7 +2513,7 @@ with tab5:
             st.markdown("---")
 
         # ── Helper: render one matchup card ─────────────────────────────────
-        def _bkt_card(m):
+        def _bkt_card(m, round_tag=""):
             t1 = m.get("t1", ""); t2 = m.get("t2", "")
             s1 = m.get("s1", 0);  s2 = m.get("s2", 0)
             winner = m.get("winner", ""); loser = m.get("loser", "")
@@ -2253,6 +2572,16 @@ with tab5:
                     f'{flag_line}'
                     f'</div>', unsafe_allow_html=True)
 
+            # ── Predict Score button ──────────────────────────────────────
+            if t1 and t2:
+                _rtag = round_tag or m.get("region", "")
+                if st.button("🎯 Score", key=f"pred_{t1}_{t2}_{_rtag}",
+                             help=f"Predict {t1} vs {t2} final score",
+                             use_container_width=True):
+                    st.session_state.predict_t1 = t1
+                    st.session_state.predict_t2 = t2
+                    st.rerun()
+
         # ── 500K Monte Carlo Simulation ─────────────────────────────────────
         _r32_pairs = [(m["t1"], m["t2"]) for m in live_rounds["R32"] if m.get("t1") and m.get("t2")]
         if len(_r32_pairs) == 16:
@@ -2310,7 +2639,7 @@ with tab5:
                     for _m in [m for m in live_rounds["R64"] if m.get("region") == _region]:
                         _s1_h = _m.get("s1", 0); _s2_h = _m.get("s2", 0)
                         st.markdown(f'<div style="color:#475569;font-size:0.68rem;margin-top:6px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
-                        _bkt_card(_m)
+                        _bkt_card(_m, round_tag="R64")
 
         with br_r32:
             _done_r32  = sum(1 for m in live_rounds["R32"] if m.get("completed"))
@@ -2326,7 +2655,7 @@ with tab5:
                     for _m in [m for m in live_rounds["R32"] if m.get("region") == _region]:
                         _s1_h = _m.get("s1", 0); _s2_h = _m.get("s2", 0)
                         st.markdown(f'<div style="color:#475569;font-size:0.68rem;margin-top:6px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
-                        _bkt_card(_m)
+                        _bkt_card(_m, round_tag="R32")
 
         with br_s16:
             _done_s16 = sum(1 for m in live_rounds["S16"] if m.get("completed"))
@@ -2340,7 +2669,7 @@ with tab5:
                         unsafe_allow_html=True)
                     _s1_h = _m.get("s1", 0); _s2_h = _m.get("s2", 0)
                     st.markdown(f'<div style="color:#475569;font-size:0.72rem;margin-bottom:4px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
-                    _bkt_card(_m)
+                    _bkt_card(_m, round_tag="S16")
 
         with br_e8:
             _done_e8 = sum(1 for m in live_rounds["E8"] if m.get("completed"))
@@ -2354,7 +2683,7 @@ with tab5:
                         unsafe_allow_html=True)
                     _s1_h = _m.get("s1", 0); _s2_h = _m.get("s2", 0)
                     st.markdown(f'<div style="color:#475569;font-size:0.72rem;margin-bottom:4px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
-                    _bkt_card(_m)
+                    _bkt_card(_m, round_tag="E8")
 
         with br_ff:
             _done_ff = sum(1 for m in live_rounds["FF"] if m.get("completed"))
@@ -2367,7 +2696,7 @@ with tab5:
                         unsafe_allow_html=True)
                     _s1_h = _m.get("s1", 0); _s2_h = _m.get("s2", 0)
                     st.markdown(f'<div style="color:#475569;font-size:0.72rem;margin-bottom:4px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
-                    _bkt_card(_m)
+                    _bkt_card(_m, round_tag="FF")
 
         with br_champ:
             st.markdown('<div style="text-align:center;font-size:1.4rem;font-weight:900;color:#fbbf24;margin:16px 0">🏆 Championship Game</div>', unsafe_allow_html=True)
@@ -2377,7 +2706,7 @@ with tab5:
                 with _ch_cols[1]:
                     _s1_h = _cm.get("s1", 0); _s2_h = _cm.get("s2", 0)
                     st.markdown(f'<div style="color:#475569;font-size:0.78rem;text-align:center;margin-bottom:6px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
-                    _bkt_card(_cm)
+                    _bkt_card(_cm, round_tag="CHAMP")
                 if _cm.get("completed"):
                     _champ_w = _cm["winner"]
                     _champ_s = _cm.get("s1", 0) if _champ_w == _cm["t1"] else _cm.get("s2", 0)
@@ -4398,3 +4727,499 @@ with tab8:
                         f'{"  ·  " + str(r["winner_hot"]) if r.get("winner_hot") and str(r.get("winner_hot")) not in ("", "nan") else ""}</div>'
                         f'<div style="color:#64748b;font-size:0.75rem;margin-top:3px">{str(r.get("narrative",""))}</div>'
                         f'</div>', unsafe_allow_html=True)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 9 — TOSSUP LAB
+# ─────────────────────────────────────────────────────────────────────────────
+with tab9:
+    st.markdown('<div class="section-header">🔬 TOSSUP LAB — Close Game Intelligence</div>',
+                unsafe_allow_html=True)
+    _tl_hdr1, _tl_hdr2 = st.columns([5, 1])
+    with _tl_hdr1:
+        st.caption("The model is a blowout predictor — this lab helps you call the coin flips.")
+    with _tl_hdr2:
+        if st.button("🔄 Refresh", key="tossup_refresh"):
+            st.cache_data.clear()
+            st.rerun()
+
+    # ── Recompute bracket data using cached functions ────────────────────────
+    _tl_team_set = frozenset(in_bracket["team"].tolist())
+    _tl_all_matchups = build_round_matchups(in_bracket)
+    _tl_recap = load_or_update_results(_tl_team_set, in_bracket, _tl_all_matchups)
+    _tl_adapted = _compute_adapted_scores(in_bracket, _tl_recap)
+    _tl_rounds = build_bracket_live(in_bracket, _tl_recap, _tl_adapted)
+
+    # ── Identify tossups (model confidence ≤ 65%) ────────────────────────────
+    _TOSSUP_THRESH = 0.65
+    _tl_upcoming = []
+    _tl_completed = []
+    for rnd_name, games in _tl_rounds.items():
+        for g in games:
+            wp = g.get("winner_p", 1.0)
+            if wp > _TOSSUP_THRESH:
+                continue
+            g["_round"] = rnd_name
+            if g.get("completed"):
+                _tl_completed.append(g)
+            else:
+                _tl_upcoming.append(g)
+
+    # ── Summary metrics ──────────────────────────────────────────────────────
+    _tl_comp_correct = sum(1 for g in _tl_completed if g.get("model_correct"))
+    _tl_comp_total = len(_tl_completed)
+    _tl_comp_pct = (_tl_comp_correct / _tl_comp_total * 100) if _tl_comp_total else 0
+    _mc1, _mc2, _mc3 = st.columns(3)
+    _mc1.metric("🎯 Active Tossups", len(_tl_upcoming))
+    _mc2.metric("✅ Completed Tossups", _tl_comp_total)
+    _mc3.metric("📊 Tossup Accuracy", f"{_tl_comp_correct}-{_tl_comp_total - _tl_comp_correct} ({_tl_comp_pct:.0f}%)" if _tl_comp_total else "—")
+
+    # ── Section A: Active Tossups ────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🎯 Active Tossups")
+    if not _tl_upcoming:
+        st.info("No upcoming tossup matchups detected (all model picks > 65% confidence).")
+    else:
+        for _tg in sorted(_tl_upcoming, key=lambda x: x.get("winner_p", 0.5)):
+            _t1, _t2 = _tg["t1"], _tg["t2"]
+            _s1, _s2 = _tg.get("s1", 0), _tg.get("s2", 0)
+            _wp = _tg.get("winner_p", 0.5)
+            _mw = _tg.get("model_winner", _t1)
+            _rnd = _tg.get("_round", "")
+            _p1 = _wp if _mw == _t1 else (1 - _wp)
+
+            with st.expander(f"**{_rnd}** — #{_s1} {_t1} vs #{_s2} {_t2}  ·  {_wp*100:.0f}% conf", expanded=True):
+                # Team lookup
+                _tr1 = in_bracket[in_bracket["team"] == _t1]
+                _tr2 = in_bracket[in_bracket["team"] == _t2]
+                _cs1 = safe_f(_tr1.iloc[0].get("contender_score")) if len(_tr1) else 0
+                _cs2 = safe_f(_tr2.iloc[0].get("contender_score")) if len(_tr2) else 0
+
+                # Flags
+                _f1_parts = []
+                _f2_parts = []
+                if len(_tr1):
+                    r = _tr1.iloc[0]
+                    if r.get("dangerous_low_seed_flag"): _f1_parts.append("💥 Dangerous")
+                    if r.get("fraud_favorite_flag"): _f1_parts.append("🃏 Fraud Fav")
+                    if r.get("cinderella_flag"): _f1_parts.append("🪄 Cinderella")
+                    if r.get("underseeded_flag"): _f1_parts.append("📈 Underseeded")
+                if len(_tr2):
+                    r = _tr2.iloc[0]
+                    if r.get("dangerous_low_seed_flag"): _f2_parts.append("💥 Dangerous")
+                    if r.get("fraud_favorite_flag"): _f2_parts.append("🃏 Fraud Fav")
+                    if r.get("cinderella_flag"): _f2_parts.append("🪄 Cinderella")
+                    if r.get("underseeded_flag"): _f2_parts.append("📈 Underseeded")
+
+                # Team cards
+                _tc1, _tc2 = st.columns(2)
+                with _tc1:
+                    _hl1 = hot_label(_tr1.iloc[0]) if len(_tr1) else ""
+                    _badge1 = "🤖 Model Pick" if _mw == _t1 else ""
+                    st.markdown(_team_card_html(
+                        f"#{_s1} {_t1}", f"{_cs1:.1f}", _hl1,
+                        " · ".join(_f1_parts) if _f1_parts else "No flags",
+                        border="#3b82f6" if _mw == _t1 else "#374151",
+                        badge=_badge1
+                    ), unsafe_allow_html=True)
+                    st.markdown(_prob_bar_html(_p1, "#3b82f6"), unsafe_allow_html=True)
+                    st.caption(f"Moneyline: {american_line(_p1)}")
+
+                with _tc2:
+                    _hl2 = hot_label(_tr2.iloc[0]) if len(_tr2) else ""
+                    _badge2 = "🤖 Model Pick" if _mw == _t2 else ""
+                    st.markdown(_team_card_html(
+                        f"#{_s2} {_t2}", f"{_cs2:.1f}", _hl2,
+                        " · ".join(_f2_parts) if _f2_parts else "No flags",
+                        border="#3b82f6" if _mw == _t2 else "#374151",
+                        badge=_badge2
+                    ), unsafe_allow_html=True)
+                    st.markdown(_prob_bar_html(1 - _p1, "#3b82f6"), unsafe_allow_html=True)
+                    st.caption(f"Moneyline: {american_line(1 - _p1)}")
+
+                # Tossup Scorecard
+                st.markdown("#### 📊 Tossup Scorecard")
+                _sc = compute_tossup_scorecard(_t1, _t2, in_bracket)
+                if _sc is None:
+                    st.warning("Could not compute scorecard — team data missing.")
+                else:
+                    _bar_html = ""
+                    for m in _sc["metrics"]:
+                        hb = None
+                        for _nm, _key, _hb, _w in _TOSSUP_METRICS:
+                            if _nm == m["name"]:
+                                hb = _hb
+                                break
+                        _bar_html += _tossup_metric_bar_html(
+                            m["name"], m["t1_val"], m["t2_val"], _t1, _t2, higher_better=hb
+                        )
+                    st.markdown(
+                        f'<div style="background:#0f1419;border-radius:8px;padding:12px;margin:8px 0">'
+                        f'<div style="display:flex;justify-content:space-between;margin-bottom:8px;padding-bottom:6px;border-bottom:2px solid #334155">'
+                        f'<span style="color:#e2e8f0;font-weight:700">{_t1}</span>'
+                        f'<span style="color:#64748b;font-size:0.85rem">Metric</span>'
+                        f'<span style="color:#e2e8f0;font-weight:700">{_t2}</span>'
+                        f'</div>'
+                        f'{_bar_html}'
+                        f'<div style="margin-top:8px;padding-top:6px;border-top:2px solid #334155;display:flex;justify-content:space-between">'
+                        f'<span style="color:#4ade80;font-weight:700">{_t1}: {_sc["t1_adv"]} edges (wt {_sc["t1_wt"]})</span>'
+                        f'<span style="color:#4ade80;font-weight:700">{_t2}: {_sc["t2_adv"]} edges (wt {_sc["t2_wt"]})</span>'
+                        f'</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+
+                    # Coach experience + clutch/form
+                    _cx1, _cx2, _cx3 = st.columns(3)
+                    with _cx1:
+                        st.markdown("**🎓 Coach Exp**")
+                        st.caption(f"{_t1}: {_sc['t1_coach']} NCAA games")
+                        st.caption(f"{_t2}: {_sc['t2_coach']} NCAA games")
+                        if _sc["coach_edge"]:
+                            st.caption(f"Edge: {_sc['coach_edge']}")
+                    with _cx2:
+                        st.markdown("**🧊 Clutch Score**")
+                        st.caption(f"{_t1}: {_sc['t1_clutch']:.1f}")
+                        st.caption(f"{_t2}: {_sc['t2_clutch']:.1f}")
+                    with _cx3:
+                        st.markdown("**📈 Last 10 Win%**")
+                        st.caption(f"{_t1}: {_sc['t1_last10']*100:.0f}%")
+                        st.caption(f"{_t2}: {_sc['t2_last10']*100:.0f}%")
+
+                    # Matchup insight
+                    _mi = style_matchup_insight_by_name(_t1, _t2, in_bracket)
+                    if _mi:
+                        st.markdown(f"**🔍 Matchup Insight:** {_mi}")
+
+                    # STATLAS LEAN
+                    st.markdown("---")
+                    _lean_team, _lean_reason = generate_statlas_lean(_t1, _t2, _sc, _mw, _wp, in_bracket)
+                    if _lean_team == "COIN FLIP":
+                        _lean_color = "#f59e0b"
+                        _lean_icon = "🪙"
+                    elif "HIGH" in _lean_reason:
+                        _lean_color = "#4ade80"
+                        _lean_icon = "🎯"
+                    elif "SPLIT" in _lean_reason:
+                        _lean_color = "#f97316"
+                        _lean_icon = "⚠️"
+                    else:
+                        _lean_color = "#60a5fa"
+                        _lean_icon = "📊"
+                    st.markdown(
+                        f'<div style="background:#0a1520;border:2px solid {_lean_color};border-radius:10px;padding:14px;margin-top:8px">'
+                        f'<div style="color:{_lean_color};font-size:1.1rem;font-weight:800">'
+                        f'{_lean_icon} STATLAS LEAN: {_lean_team}</div>'
+                        f'<div style="color:#cbd5e1;margin-top:6px">{_lean_reason}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+
+    # ── Section B: Completed Tossups ─────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📋 Completed Tossups")
+    if not _tl_completed:
+        st.info("No completed tossup games yet.")
+    else:
+        st.markdown(f"**Record on tossups:** {_tl_comp_correct}-{_tl_comp_total - _tl_comp_correct}"
+                    f" ({_tl_comp_pct:.0f}%)")
+        for _cg in _tl_completed:
+            _ct1, _ct2 = _cg["t1"], _cg["t2"]
+            _cw = _cg.get("winner", "")
+            _cmw = _cg.get("model_winner", "")
+            _cwp = _cg.get("winner_p", 0.5)
+            _cmc = _cg.get("model_correct", False)
+            _crnd = _cg.get("_round", "")
+            _cs1, _cs2 = _cg.get("s1", 0), _cg.get("s2", 0)
+            _icon = "✅" if _cmc else "❌"
+            _bg = "#0a1a0a" if _cmc else "#1a0a0a"
+            _bc = "#4ade80" if _cmc else "#f87171"
+
+            # Compute scorecard for completed game
+            _csc = compute_tossup_scorecard(_ct1, _ct2, in_bracket)
+            _sc_correct = False
+            if _csc:
+                _sc_leader = _ct1 if _csc["t1_wt"] > _csc["t2_wt"] else (
+                    _ct2 if _csc["t2_wt"] > _csc["t1_wt"] else "")
+                _sc_correct = (_sc_leader == _cw)
+
+            st.markdown(
+                f'<div style="background:{_bg};border-left:3px solid {_bc};border-radius:5px;padding:8px 12px;margin-bottom:5px">'
+                f'<div style="color:{_bc};font-weight:700">{_icon} {_crnd}: #{_cs1} {_ct1} vs #{_cs2} {_ct2} — '
+                f'Winner: {_cw}</div>'
+                f'<div style="color:#94a3b8;font-size:0.78rem">'
+                f'Model pick: {_cmw} ({_cwp*100:.0f}%) · '
+                f'Scorecard {"✅ agreed" if _sc_correct else "❌ missed"}</div>'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+
+    # ── Section C: Tossup Intelligence ───────────────────────────────────────
+    if _tl_completed:
+        with st.expander("🧠 Tossup Intelligence — Which Metrics Predicted Winners?", expanded=False):
+            _metric_hits = {m[0]: 0 for m in _TOSSUP_METRICS if m[2] is not None}
+            _metric_total = {m[0]: 0 for m in _TOSSUP_METRICS if m[2] is not None}
+            for _cg in _tl_completed:
+                _csc = compute_tossup_scorecard(_cg["t1"], _cg["t2"], in_bracket)
+                if not _csc:
+                    continue
+                _cw = _cg.get("winner", "")
+                for m in _csc["metrics"]:
+                    if m["name"] not in _metric_hits:
+                        continue
+                    _metric_total[m["name"]] += 1
+                    if m.get("edge_team") == _cw:
+                        _metric_hits[m["name"]] += 1
+
+            st.markdown("Which of the 6 scorecard metrics correctly predicted the winner in completed tossups:")
+            for mname in _metric_hits:
+                _mh = _metric_hits[mname]
+                _mt = _metric_total[mname]
+                _mpct = (_mh / _mt * 100) if _mt else 0
+                _bar_w = int(_mpct)
+                _bar_c = "#4ade80" if _mpct >= 60 else ("#f59e0b" if _mpct >= 40 else "#f87171")
+                st.markdown(
+                    f'<div style="margin-bottom:6px">'
+                    f'<div style="display:flex;justify-content:space-between;margin-bottom:2px">'
+                    f'<span style="color:#e2e8f0;font-weight:600">{mname}</span>'
+                    f'<span style="color:{_bar_c};font-weight:700">{_mh}/{_mt} ({_mpct:.0f}%)</span>'
+                    f'</div>'
+                    f'<div style="background:#1e293b;border-radius:4px;height:6px">'
+                    f'<div style="width:{_bar_w}%;background:{_bar_c};height:6px;border-radius:4px"></div>'
+                    f'</div></div>',
+                    unsafe_allow_html=True
+                )
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 10 — SCORE PREDICTOR
+# ─────────────────────────────────────────────────────────────────────────────
+with tab10:
+    st.markdown('<div class="section-header">🎯 SCORE PREDICTOR — Final Score Intelligence</div>',
+                unsafe_allow_html=True)
+    _sp_hdr1, _sp_hdr2 = st.columns([5, 1])
+    with _sp_hdr1:
+        st.caption("Model picks the winner · Regression sets the total · Click any matchup in the Bracket tab to predict scores")
+    with _sp_hdr2:
+        if st.button("🔄 Refresh", key="predict_refresh"):
+            st.cache_data.clear()
+            st.rerun()
+
+    # ── Recompute bracket data ───────────────────────────────────────────
+    _sp_team_set = frozenset(in_bracket["team"].tolist())
+    _sp_all_matchups = build_round_matchups(in_bracket)
+    _sp_recap = load_or_update_results(_sp_team_set, in_bracket, _sp_all_matchups)
+    _sp_adapted = _compute_adapted_scores(in_bracket, _sp_recap)
+    _sp_rounds = build_bracket_live(in_bracket, _sp_recap, _sp_adapted)
+
+    # ── Team selection ───────────────────────────────────────────────────
+    _sp_teams = sorted(in_bracket["team"].tolist())
+    _sp_sel1, _sp_sel2 = st.columns(2)
+    with _sp_sel1:
+        _sp_def1 = _sp_teams.index(st.session_state.predict_t1) if st.session_state.predict_t1 in _sp_teams else 0
+        _sp_t1 = st.selectbox("Team 1", _sp_teams, index=_sp_def1, key="sp_team1")
+    with _sp_sel2:
+        _sp_def2 = _sp_teams.index(st.session_state.predict_t2) if st.session_state.predict_t2 in _sp_teams else min(1, len(_sp_teams) - 1)
+        _sp_t2 = st.selectbox("Team 2", _sp_teams, index=_sp_def2, key="sp_team2")
+
+    # Clear navigation state after consumption
+    if st.session_state.predict_t1:
+        st.session_state.predict_t1 = None
+        st.session_state.predict_t2 = None
+
+    if _sp_t1 == _sp_t2:
+        st.warning("Select two different teams to predict a score.")
+    else:
+        pred = predict_final_score(_sp_t1, _sp_t2, in_bracket)
+        if pred is None:
+            st.warning("Insufficient data for score prediction.")
+        else:
+            # ── Scoreboard display ───────────────────────────────────────
+            _tr1 = in_bracket[in_bracket["team"] == _sp_t1]
+            _tr2 = in_bracket[in_bracket["team"] == _sp_t2]
+            _s1 = safe_i(_tr1.iloc[0].get("seed", 0)) if len(_tr1) else 0
+            _s2 = safe_i(_tr2.iloc[0].get("seed", 0)) if len(_tr2) else 0
+            _t1_sc = pred["t1_score"]
+            _t2_sc = pred["t2_score"]
+            _t1_color = "#4ade80" if _t1_sc > _t2_sc else ("#f87171" if _t1_sc < _t2_sc else "#f1f5f9")
+            _t2_color = "#4ade80" if _t2_sc > _t1_sc else ("#f87171" if _t2_sc < _t1_sc else "#f1f5f9")
+
+            st.markdown(
+                f'<div style="background:#131820;border:2px solid #f97316;border-radius:12px;'
+                f'padding:20px;text-align:center;margin:10px 0">'
+                f'<div style="display:flex;justify-content:center;align-items:center;gap:40px">'
+                f'<div>'
+                f'<div style="color:#94a3b8;font-size:0.8rem">#{_s1} seed</div>'
+                f'<div style="color:#f1f5f9;font-weight:800;font-size:1.2rem">{_sp_t1}</div>'
+                f'<div style="color:{_t1_color};font-weight:900;font-size:2.5rem">{_t1_sc:.0f}</div>'
+                f'</div>'
+                f'<div style="color:#64748b;font-size:1.5rem;font-weight:300">—</div>'
+                f'<div>'
+                f'<div style="color:#94a3b8;font-size:0.8rem">#{_s2} seed</div>'
+                f'<div style="color:#f1f5f9;font-weight:800;font-size:1.2rem">{_sp_t2}</div>'
+                f'<div style="color:{_t2_color};font-weight:900;font-size:2.5rem">{_t2_sc:.0f}</div>'
+                f'</div>'
+                f'</div>'
+                f'<div style="color:#94a3b8;font-size:0.85rem;margin-top:12px">'
+                f'Projected possessions: {pred["possessions"]:.0f} · '
+                f'Method: {"Model + Regression" if pred["method"] == "regression_calibrated" else "Efficiency-Adjusted" if pred["method"] == "efficiency_adjusted" else "PPG Average"}'
+                f'</div>'
+                f'</div>',
+                unsafe_allow_html=True)
+
+            # ── Betting lines & confidence ───────────────────────────────
+            # Derive win probability from the predicted spread so that
+            # spread, total, win-prob, and moneyline are all consistent.
+            # k=0.15 is basketball-calibrated: 7-pt spread ≈ 74% win prob.
+            _wp = 1.0 / (1.0 + np.exp(-pred["spread"] * 0.15))
+            _spread = pred["spread"]
+            if _spread > 0:
+                _spread_str = f"{_sp_t1} -{abs(_spread):.1f}"
+            elif _spread < 0:
+                _spread_str = f"{_sp_t2} -{abs(_spread):.1f}"
+            else:
+                _spread_str = "PICK"
+
+            _sc1, _sc2, _sc3, _sc4 = st.columns(4)
+            with _sc1:
+                st.metric("📊 Spread", _spread_str)
+            with _sc2:
+                st.metric("📈 Total (O/U)", f"{pred['total']:.1f}")
+            with _sc3:
+                _wp_team = _sp_t1 if _wp >= 0.5 else _sp_t2
+                _wp_pct = _wp if _wp >= 0.5 else (1 - _wp)
+                st.metric("🎲 Win Prob", f"{_wp_pct*100:.0f}% {_wp_team}")
+            with _sc4:
+                _ml_team = _sp_t1 if _wp >= 0.5 else _sp_t2
+                _ml_val = american_line(_wp if _wp >= 0.5 else (1 - _wp))
+                st.metric("💰 Moneyline", f"{_ml_team} {_ml_val}")
+
+            # Confidence range
+            cr = pred["confidence_range"]
+            st.markdown(
+                f'<div style="background:#1e293b;border-radius:8px;padding:10px;margin:10px 0">'
+                f'<div style="color:#94a3b8;font-size:0.85rem;font-weight:600">Confidence Range (68%)</div>'
+                f'<div style="color:#f1f5f9;font-size:0.9rem">'
+                f'{_sp_t1}: {max(0, _t1_sc - cr):.0f} — {_t1_sc + cr:.0f} · '
+                f'{_sp_t2}: {max(0, _t2_sc - cr):.0f} — {_t2_sc + cr:.0f}'
+                f'</div></div>',
+                unsafe_allow_html=True)
+
+            # ── Efficiency breakdown ─────────────────────────────────────
+            if pred["method"] in ("efficiency_adjusted", "regression_calibrated"):
+                st.markdown("### 📊 Efficiency Breakdown")
+                _ef1, _ef2 = st.columns(2)
+                with _ef1:
+                    st.markdown(f"**{_sp_t1}**")
+                    _em1a, _em1b, _em1c = st.columns(3)
+                    _em1a.metric("Adj. Offense", f"{pred['t1_off']:.1f}")
+                    _em1b.metric("Adj. Defense", f"{pred['t1_def']:.1f}")
+                    _em1c.metric("Tempo", f"{pred['t1_tempo']:.1f}" if pred["t1_tempo"] > 0 else "N/A")
+                with _ef2:
+                    st.markdown(f"**{_sp_t2}**")
+                    _em2a, _em2b, _em2c = st.columns(3)
+                    _em2a.metric("Adj. Offense", f"{pred['t2_off']:.1f}")
+                    _em2b.metric("Adj. Defense", f"{pred['t2_def']:.1f}")
+                    _em2c.metric("Tempo", f"{pred['t2_tempo']:.1f}" if pred["t2_tempo"] > 0 else "N/A")
+
+            # ── Matchup factors comparison bars ──────────────────────────
+            st.markdown("### 🔬 Matchup Factors")
+            _factor_metrics = [
+                ("3-Point %", "three_pt_pct", True),
+                ("FT %", "ft_pct", True),
+                ("Eff. FG%", "eff_fg_pct", True),
+                ("Off. Reb %", "off_rebound_pct", True),
+                ("Def. Reb %", "def_rebound_pct", True),
+                ("Turnover %", "turnover_pct", False),
+                ("Forced TO %", "opp_turnover_pct", True),
+                ("Last 10 Win%", "last10_win_pct", True),
+            ]
+            _factor_html = ""
+            for fname, fkey, higher_better in _factor_metrics:
+                v1 = safe_f(_tr1.iloc[0].get(fkey)) if len(_tr1) else 0
+                v2 = safe_f(_tr2.iloc[0].get(fkey)) if len(_tr2) else 0
+                if v1 == 0 and v2 == 0:
+                    continue
+                _factor_html += _tossup_metric_bar_html(
+                    fname, v1, v2, _sp_t1, _sp_t2, higher_better=higher_better)
+            if _factor_html:
+                st.markdown(
+                    f'<div style="background:#0f1419;border-radius:8px;padding:12px;margin:8px 0">'
+                    f'<div style="display:flex;justify-content:space-between;margin-bottom:8px;'
+                    f'padding-bottom:6px;border-bottom:2px solid #334155">'
+                    f'<span style="color:#e2e8f0;font-weight:700">{_sp_t1}</span>'
+                    f'<span style="color:#64748b;font-size:0.85rem">Metric</span>'
+                    f'<span style="color:#e2e8f0;font-weight:700">{_sp_t2}</span>'
+                    f'</div>'
+                    f'{_factor_html}'
+                    f'</div>',
+                    unsafe_allow_html=True)
+
+            # ── Style matchup insight ────────────────────────────────────
+            _mi = style_matchup_insight_by_name(_sp_t1, _sp_t2, in_bracket)
+            if _mi:
+                st.markdown(
+                    f'<div style="background:#1a2a1a;border-left:3px solid #f97316;padding:8px 12px;'
+                    f'border-radius:4px;margin:10px 0;color:#f1f5f9;font-weight:600">'
+                    f'🔍 {_mi}</div>',
+                    unsafe_allow_html=True)
+
+            # ── Flags & momentum ─────────────────────────────────────────
+            _flag_parts = []
+            for _tn, _tr in [(_sp_t1, _tr1), (_sp_t2, _tr2)]:
+                if len(_tr):
+                    r = _tr.iloc[0]
+                    if r.get("dangerous_low_seed_flag"): _flag_parts.append(f"💥 {_tn}: Dangerous")
+                    if r.get("fraud_favorite_flag"): _flag_parts.append(f"🃏 {_tn}: Fraud Fav")
+                    if r.get("cinderella_flag"): _flag_parts.append(f"🪄 {_tn}: Cinderella")
+                    hl = hot_label(r)
+                    if hl: _flag_parts.append(f"{_tn}: {hl}")
+            if _flag_parts:
+                st.markdown(
+                    f'<div style="background:#1e293b;border-radius:6px;padding:8px 12px;margin:8px 0;'
+                    f'color:#f59e0b;font-size:0.85rem">{"  ·  ".join(_flag_parts)}</div>',
+                    unsafe_allow_html=True)
+
+    # ── Model Calibration: Predicted vs Actual ───────────────────────────
+    st.markdown("---")
+    st.markdown("### 📊 Model Calibration — Predicted vs Actual")
+    st.caption("How well the efficiency model predicts actual final scores in completed tournament games.")
+
+    calibration = compute_prediction_accuracy(in_bracket, _sp_recap)
+    if not calibration:
+        st.info("No completed games yet for calibration.")
+    else:
+        _cal_correct = sum(1 for c in calibration if c["winner_correct"])
+        _cal_total = len(calibration)
+        _avg_spread_err = np.mean([c["spread_error"] for c in calibration])
+        _avg_total_err = np.mean([c["total_error"] for c in calibration])
+
+        _cm1, _cm2, _cm3, _cm4 = st.columns(4)
+        _cm1.metric("Winner Correct", f"{_cal_correct}/{_cal_total}", f"{_cal_correct/_cal_total*100:.0f}%")
+        _cm2.metric("Avg Spread Error", f"{_avg_spread_err:.1f} pts")
+        _cm3.metric("Avg Total Error", f"{_avg_total_err:.1f} pts")
+        _cm4.metric("Games Analyzed", _cal_total)
+
+        with st.expander("📋 Game-by-Game Breakdown", expanded=False):
+            for c in sorted(calibration, key=lambda x: x["spread_error"], reverse=True):
+                _correct_icon = "✅" if c["winner_correct"] else "❌"
+                _bg = "#0a1a0a" if c["winner_correct"] else "#1a0a0a"
+                _bc = "#4ade80" if c["winner_correct"] else "#f87171"
+                st.markdown(
+                    f'<div style="background:{_bg};border-left:3px solid {_bc};border-radius:5px;'
+                    f'padding:8px 12px;margin:4px 0">'
+                    f'<div style="display:flex;justify-content:space-between">'
+                    f'<div>'
+                    f'<div style="color:#f1f5f9;font-weight:700;font-size:0.85rem">'
+                    f'{_correct_icon} {c["t1"]} vs {c["t2"]} ({c["round"]})</div>'
+                    f'<div style="color:#94a3b8;font-size:0.78rem">'
+                    f'Predicted: {c["pred_t1"]:.0f}-{c["pred_t2"]:.0f} · '
+                    f'Actual: {c["actual_t1"]}-{c["actual_t2"]}</div>'
+                    f'</div>'
+                    f'<div style="text-align:right">'
+                    f'<div style="color:#f59e0b;font-weight:600;font-size:0.85rem">'
+                    f'Spread err: {c["spread_error"]:.1f}</div>'
+                    f'<div style="color:#64748b;font-size:0.75rem">'
+                    f'Total err: {c["total_error"]:.1f}</div>'
+                    f'</div>'
+                    f'</div>'
+                    f'</div>',
+                    unsafe_allow_html=True)
