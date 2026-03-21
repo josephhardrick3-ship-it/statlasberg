@@ -1253,24 +1253,27 @@ def predict_final_score(t1_name, t2_name, bkt_df, tournament_factor=0.975):
     t1_sc = max(t1_sc, 40)
     t2_sc = max(t2_sc, 40)
 
-    # Final anti-tie: tournament games can't end tied (displayed as integers)
-    if round(t1_sc) == round(t2_sc):
-        # Shift 0.5 from one team to the other (total unchanged, 1-pt spread)
+    # Convert to integers immediately to avoid double-rounding mismatches.
+    # (round(74.5419, 1) → 74.5, then :.0f banker-rounds to "74" — causes phantom ties)
+    t1_int = int(t1_sc + 0.5)  # always rounds .5 UP (no banker's rounding)
+    t2_int = int(t2_sc + 0.5)
+
+    # Anti-tie: tournament games can't end tied
+    if t1_int == t2_int:
+        # Give the winner 1 extra point (total shifts by 1 — negligible)
         if model_spread >= 0:
-            t1_sc += 0.5
-            t2_sc -= 0.5
+            t1_int += 1
         else:
-            t2_sc += 0.5
-            t1_sc -= 0.5
+            t2_int += 1
 
     possessions = (tempo1 + tempo2) / 2 if has_tempo else 67.5
-    margin = abs(t1_sc - t2_sc)
+    margin = abs(t1_int - t2_int)
     confidence_range = 6 if margin > 15 else (8 if margin > 8 else 10)
 
     return {
-        "t1_score": round(t1_sc, 1), "t2_score": round(t2_sc, 1),
+        "t1_score": t1_int, "t2_score": t2_int,
         "possessions": round(possessions, 1),
-        "spread": round(t1_sc - t2_sc, 1), "total": round(t1_sc + t2_sc, 1),
+        "spread": t1_int - t2_int, "total": t1_int + t2_int,
         "t1_off": off1, "t1_def": def1, "t2_off": off2, "t2_def": def2,
         "t1_tempo": tempo1, "t2_tempo": tempo2,
         "confidence_range": confidence_range, "method": method,
