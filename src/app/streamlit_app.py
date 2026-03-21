@@ -2146,7 +2146,13 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
 
 with tab5:
     st.markdown('<div class="section-header">🏆 2026 NCAA Tournament Bracket</div>', unsafe_allow_html=True)
-    st.caption("Model predictions · Live results update as games complete · Simulations adjust automatically")
+    _bkt_hdr1, _bkt_hdr2 = st.columns([5, 1])
+    with _bkt_hdr1:
+        st.caption("Model predictions · Live results update as games complete · Simulations adjust automatically")
+    with _bkt_hdr2:
+        if st.button("🔄 Refresh", key="bracket_refresh"):
+            st.cache_data.clear()
+            st.rerun()
 
     BRACKET_PAIRS = [(1, 16), (8, 9), (5, 12), (4, 13), (6, 11), (3, 14), (7, 10), (2, 15)]
 
