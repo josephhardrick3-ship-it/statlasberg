@@ -1,33 +1,33 @@
 event_id,date,round,region,t1,t2,winner,loser,t1_score,t2_score,model_pick,model_conf,correct,upset,winner_seed,loser_seed,winner_flags,loser_flags,winner_hot,loser_hot,narrative,t1_fg_pct,t1_fg3_pct,t1_ft_pct,t1_rebounds,t1_off_reb,t1_turnovers,t1_assists,t1_steals,t1_blocks,t1_h1,t1_h2,t2_fg_pct,t2_fg3_pct,t2_ft_pct,t2_rebounds,t2_off_reb,t2_turnovers,t2_assists,t2_steals,t2_blocks,t2_h1,t2_h2
-401856478,20260319,R64,,Duke,Siena,Duke,Siena,71,65,Duke,0.999,True,False,1,16,,,,,,38,35,100,31,11,6,15,5,2,32,39,41,19,86,43,16,8,11,3,3,43,22
-401856486,20260319,R64,,Michigan,Howard,Michigan,Howard,101,80,Michigan,1.0,True,False,1,16,,,,,,43,48,71,23,7,8,14,3,0,50,51,67,46,80,35,4,10,27,4,8,46,34
-401856493,20260319,R64,,Houston,Idaho,Houston,Idaho,78,47,Houston,0.999,True,False,2,15,,,,,,29,20,60,32,7,9,8,5,5,48,30,50,53,73,47,8,7,10,8,1,24,23
-401856483,20260319,R64,,Michigan State,North Dakota State,Michigan State,North Dakota State,92,67,Michigan State,0.989,True,False,6,14,,,,,,44,24,65,23,4,12,13,6,1,45,47,59,50,89,35,4,12,26,5,6,25,42
-401856491,20260319,R64,,Illinois,Pennsylvania,Illinois,Pennsylvania,105,70,Illinois,0.994,True,False,4,14,,,,,,45,30,50,25,7,8,13,2,3,40,65,50,42,76,48,20,3,15,2,2,30,40
-401856485,20260319,R64,,Gonzaga,Kennesaw State,Gonzaga,Kennesaw State,73,64,Gonzaga,0.992,True,False,6,14,,,,,,36,18,73,34,11,11,7,9,4,33,40,40,17,87,45,16,10,17,7,5,27,37
-401856489,20260319,R64,,Nebraska,Troy,Nebraska,Troy,76,47,Nebraska,0.937,True,False,4,13,,Underseeded,,,,28,29,93,33,9,17,11,5,2,41,35,43,36,100,37,13,6,20,10,1,25,22
-401856481,20260319,R64,,Arkansas,Hawaii,Arkansas,Hawaii,97,78,Arkansas,0.996,True,False,7,13,,,,,,45,33,55,31,11,12,15,5,2,54,43,54,19,88,41,12,10,26,8,5,36,42
-401856480,20260319,R64,,Wisconsin,High Point,High Point,Wisconsin,82,83,Wisconsin,0.854,False,True,13,3,,,,,,42,38,67,40,13,6,18,6,5,41,41,48,39,92,37,6,10,17,2,4,39,44
-401856488,20260319,R64,,Vanderbilt,McNeese State,Vanderbilt,McNeese State,78,68,Vanderbilt,0.611,True,False,10,15,,,,,,36,35,100,34,16,6,11,9,5,38,40,51,38,85,37,9,13,15,3,3,35,33
-401856482,20260319,R64,,Louisville,South Florida,Louisville,South Florida,83,79,Louisville,0.879,True,False,6,11,,,,,,39,15,88,37,18,9,14,15,3,37,46,54,52,56,41,11,22,17,5,3,27,52
-401856490,20260319,R64,,North Carolina,VCU,VCU,North Carolina,78,82,North Carolina,0.912,False,True,11,4,,,,,,45,42,69,39,7,10,12,5,5,39,36,41,28,60,44,11,8,18,8,1,28,47
-401856484,20260319,R64,,BYU,Texas,Texas,BYU,71,79,Texas,0.991,True,True,11,5,,,,,,47,36,50,40,16,9,14,6,5,37,34,43,18,79,31,8,7,6,6,4,46,33
-401856492,20260319,R64,,Saint Marys CA,Texas A&M,Texas A&M,Saint Marys CA,50,63,Texas A&M,0.58,True,False,3,5,,,,,,44,35,69,31,9,10,15,12,1,26,24,38,43,36,32,11,18,8,5,3,37,26
-401856479,20260319,R64,,Ohio State,TCU,TCU,Ohio State,64,66,Ohio State,0.589,False,False,9,8,,,,,,40,39,64,38,12,7,12,4,4,24,40,42,26,91,32,6,7,18,4,3,39,27
-401856487,20260319,R64,,Georgia,Saint Louis,Saint Louis,Georgia,77,102,Georgia,0.971,False,False,9,8,,,,,,58,32,82,47,11,13,27,8,6,32,45,35,26,65,36,15,11,9,9,4,49,53
-401856529,20260320,R64,,Arizona,Long Island University,Arizona,Long Island University,92,58,Arizona,1.0,True,False,1,16,,,,,,32,30,60,31,12,11,15,6,5,53,39,53,46,67,52,16,10,16,4,10,29,29
-401856523,20260320,R64,,Florida,Prairie View A&M,Florida,Prairie View A&M,114,55,Florida,0.998,True,False,1,16,,,,,,27,27,88,20,9,7,6,3,3,60,54,64,45,78,54,16,7,29,4,7,21,34
-401856524,20260320,R64,,Iowa State,Tennessee State,Iowa State,Tennessee State,108,74,Iowa State,0.993,True,False,2,15,,,,,,43,24,68,29,11,16,14,8,9,55,53,53,46,78,43,18,11,24,9,5,29,45
-401856519,20260320,R64,,Purdue,Queens University Royals,Purdue,Queens University Royals,104,71,Purdue,0.997,True,False,3,15,,,,,,46,28,80,19,8,8,20,10,3,45,59,63,58,67,41,15,12,24,5,6,33,38
-401856497,20260320,R64,,Connecticut,Furman,Connecticut,Furman,82,71,Connecticut,0.924,True,False,2,14,,,,,,45,38,77,23,4,11,14,3,3,40,42,49,20,72,44,18,9,22,7,1,36,35
-401856526,20260320,R64,,Virginia,Wright State,Virginia,Wright State,82,73,Virginia,0.993,True,False,9,14,,,,,,41,42,91,24,8,7,11,8,4,38,44,52,50,93,39,10,14,12,4,5,43,30
-401856521,20260320,R64,,Alabama,Hofstra,Alabama,Hofstra,90,70,Alabama,0.996,True,False,2,13,,,,,,41,46,60,34,13,12,12,6,3,37,53,48,33,74,46,17,10,16,6,6,35,35
-401856495,20260320,R64,,Kansas,California Baptist,Kansas,California Baptist,68,60,Kansas,0.991,True,False,4,13,,,,,,36,24,53,42,12,8,5,6,2,38,30,40,21,86,41,10,8,8,5,4,18,42
-401856520,20260320,R64,,Texas Tech,Akron,Texas Tech,Akron,91,71,Texas Tech,0.782,True,False,6,13,,,,,,43,26,80,25,11,9,12,5,4,40,51,64,55,63,32,7,10,17,9,5,35,36
-401856494,20260320,R64,,St. Johns,Northern Iowa,St. Johns,Northern Iowa,79,53,St. Johns,0.994,True,False,3,12,,,,,,39,21,50,29,6,6,8,6,2,47,32,47,34,68,45,12,8,13,3,6,28,25
-401856527,20260320,R64,,Tennessee,Miami OH,Tennessee,Miami OH,78,56,Tennessee,0.842,True,False,5,11,,,,,,35,24,79,25,8,12,8,8,3,51,27,53,45,70,42,13,16,19,5,2,32,24
-401856525,20260320,R64,,Kentucky,Santa Clara,Kentucky,Santa Clara,89,84,Kentucky,0.935,True,False,6,10,,,,,,41,36,92,38,12,7,17,8,2,29,44,51,36,71,40,9,11,19,5,11,31,42
-401856496,20260320,R64,,UCLA,UCF,UCLA,UCF,75,71,UCLA,0.982,True,False,5,10,,,,,,38,38,31,53,25,17,15,3,2,35,40,40,29,72,41,15,8,11,13,9,27,44
-401856518,20260320,R64,,Miami,Missouri,Miami,Missouri,80,66,Miami,0.58,True,False,7,10,,,,,,35,36,89,30,7,9,16,5,5,27,53,43,46,59,46,16,9,19,7,2,26,40
-401856528,20260320,R64,,Villanova,Utah State,Utah State,Villanova,76,86,Villanova,0.589,False,False,9,8,,,,,,55,13,78,37,9,9,19,4,0,39,37,44,47,46,27,10,9,16,6,0,37,49
-401856522,20260320,R64,,Clemson,Iowa,Iowa,Clemson,61,67,Clemson,0.589,False,False,9,8,,,,,,38,28,77,40,15,8,5,3,1,25,36,41,35,67,27,10,3,12,4,2,32,35
+401856478,20260319,R64,,Duke,Siena,Duke,Siena,71,65,Duke,0.957,True,False,1,16,,,,,,38,35,100,31,11,6,15,5,2,32,39,41,19,86,43,16,8,11,3,3,43,22
+401856486,20260319,R64,,Michigan,Howard,Michigan,Howard,101,80,Michigan,0.992,True,False,1,16,,,,,,43,48,71,23,7,8,14,3,0,50,51,67,46,80,35,4,10,27,4,8,46,34
+401856493,20260319,R64,,Houston,Idaho,Houston,Idaho,78,47,Houston,0.982,True,False,2,15,,Underseeded,,,,29,20,60,32,7,9,8,5,5,48,30,50,53,73,47,8,7,10,8,1,24,23
+401856483,20260319,R64,,Michigan State,North Dakota State,Michigan State,North Dakota State,92,67,Michigan State,0.797,True,False,3,14,,Dangerous,,,,44,24,65,23,4,12,13,6,1,45,47,59,50,89,35,4,12,26,5,6,25,42
+401856491,20260319,R64,,Illinois,Pennsylvania,Illinois,Pennsylvania,105,70,Illinois,0.964,True,False,3,14,,Underseeded,,,,45,30,50,25,7,8,13,2,3,40,65,50,42,76,48,20,3,15,2,2,30,40
+401856485,20260319,R64,,Gonzaga,Kennesaw State,Gonzaga,Kennesaw State,73,64,Gonzaga,0.989,True,False,4,13,,,,,,36,18,73,34,11,11,7,9,4,33,40,40,17,87,45,16,10,17,7,5,27,37
+401856489,20260319,R64,,Nebraska,Troy,Nebraska,Troy,76,47,Nebraska,0.946,True,False,4,13,,Underseeded,,,,28,29,93,33,9,17,11,5,2,41,35,43,36,100,37,13,6,20,10,1,25,22
+401856481,20260319,R64,,Arkansas,Hawaii,Arkansas,Hawaii,97,78,Arkansas,0.979,True,False,4,13,,Dangerous,,,,45,33,55,31,11,12,15,5,2,54,43,54,19,88,41,12,10,26,8,5,36,42
+401856480,20260319,R64,,Wisconsin,High Point,High Point,Wisconsin,82,83,Wisconsin,0.854,False,True,12,5,Dangerous,Dangerous,,,,42,38,67,40,13,6,18,6,5,41,41,48,39,92,37,6,10,17,2,4,39,44
+401856488,20260319,R64,,Vanderbilt,McNeese State,Vanderbilt,McNeese State,78,68,Vanderbilt,0.611,True,False,5,12,,Dangerous,,,,36,35,100,34,16,6,11,9,5,38,40,51,38,85,37,9,13,15,3,3,35,33
+401856482,20260319,R64,,Louisville,South Florida,Louisville,South Florida,83,79,South Florida,0.563,False,False,6,11,,Dangerous,,,,39,15,88,37,18,9,14,15,3,37,46,54,52,56,41,11,22,17,5,3,27,52
+401856490,20260319,R64,,North Carolina,Virginia Commonwealth,Virginia Commonwealth,North Carolina,78,82,Virginia Commonwealth,0.703,True,True,11,6,Dangerous,Dangerous,,,,45,42,69,39,7,10,12,5,5,39,36,41,28,60,44,11,8,18,8,1,28,47
+401856484,20260319,R64,,Brigham Young,Texas,Texas,Brigham Young,71,79,Brigham Young,0.606,False,True,11,6,Dangerous,Dangerous,,,,47,36,50,40,16,9,14,6,5,37,34,43,18,79,31,8,7,6,6,4,46,33
+401856492,20260319,R64,,Saint Mary's,Texas A&M,Texas A&M,Saint Mary's,50,63,Texas A&M,0.606,True,False,10,7,Dangerous,Dangerous,,,,44,35,69,31,9,10,15,12,1,26,24,38,43,36,32,11,18,8,5,3,37,26
+401856479,20260319,R64,,Ohio State,Texas Christian,Texas Christian,Ohio State,64,66,Ohio State,0.669,False,False,9,8,Dangerous,Dangerous,,,,40,39,64,38,12,7,12,4,4,24,40,42,26,91,32,6,7,18,4,3,39,27
+401856487,20260319,R64,,Georgia,Saint Louis,Saint Louis,Georgia,77,102,Georgia,0.865,False,False,9,8,Dangerous,Dangerous,,,,58,32,82,47,11,13,27,8,6,32,45,35,26,65,36,15,11,9,9,4,49,53
+401856529,20260320,R64,,Arizona,Long Island University,Arizona,Long Island University,92,58,Arizona,0.967,True,False,1,16,,,,,,32,30,60,31,12,11,15,6,5,53,39,53,46,67,52,16,10,16,4,10,29,29
+401856523,20260320,R64,,Florida,Prairie View,Florida,Prairie View,114,55,Florida,0.99,True,False,1,16,,,,,,27,27,88,20,9,7,6,3,3,60,54,64,45,78,54,16,7,29,4,7,21,34
+401856524,20260320,R64,,Iowa State,Tennessee State,Iowa State,Tennessee State,108,74,Iowa State,0.916,True,False,2,15,,,,,,43,24,68,29,11,16,14,8,9,55,53,53,46,78,43,18,11,24,9,5,29,45
+401856519,20260320,R64,,Purdue,Queens,Purdue,Queens,104,71,Purdue,0.924,True,False,3,14,,Dangerous,,,,46,28,80,19,8,8,20,10,3,45,59,63,58,67,41,15,12,24,5,6,33,38
+401856497,20260320,R64,,Connecticut,Furman,Connecticut,Furman,82,71,Connecticut,0.924,True,False,2,15,,Dangerous,,,,45,38,77,23,4,11,14,3,3,40,42,49,20,72,44,18,9,22,7,1,36,35
+401856526,20260320,R64,,Virginia,Wright State,Virginia,Wright State,82,73,Virginia,0.927,True,False,3,14,,Dangerous,,,,41,42,91,24,8,7,11,8,4,38,44,52,50,93,39,10,14,12,4,5,43,30
+401856521,20260320,R64,,Alabama,Hofstra,Alabama,Hofstra,90,70,Alabama,0.915,True,False,2,15,,Dangerous,,,,41,46,60,34,13,12,12,6,3,37,53,48,33,74,46,17,10,16,6,6,35,35
+401856495,20260320,R64,,Kansas,California Baptist,Kansas,California Baptist,68,60,Kansas,0.941,True,False,4,13,Dangerous,Dangerous,,,,36,24,53,42,12,8,5,6,2,38,30,40,21,86,41,10,8,8,5,4,18,42
+401856520,20260320,R64,,Texas Tech,Akron,Texas Tech,Akron,91,71,Texas Tech,0.782,True,False,5,12,,Dangerous,,,,43,26,80,25,11,9,12,5,4,40,51,64,55,63,32,7,10,17,9,5,35,36
+401856494,20260320,R64,,St. John's,Northern Iowa,St. John's,Northern Iowa,79,53,St. John's,0.942,True,False,5,12,,Dangerous,,,,39,21,50,29,6,6,8,6,2,47,32,47,34,68,45,12,8,13,3,6,28,25
+401856527,20260320,R64,,Tennessee,Miami OH,Tennessee,Miami OH,78,56,Tennessee,0.842,True,False,6,11,,,,,,35,24,79,25,8,12,8,8,3,51,27,53,45,70,42,13,16,19,5,2,32,24
+401856525,20260320,R64,,Kentucky,Santa Clara,Kentucky,Santa Clara,89,84,Kentucky,0.623,True,False,7,10,Dangerous,Dangerous,,,,41,36,92,38,12,7,17,8,2,29,44,51,36,71,40,9,11,19,5,11,31,42
+401856496,20260320,R64,,UCLA,Central Florida,UCLA,Central Florida,75,71,UCLA,0.89,True,False,7,10,Dangerous,Dangerous,,,,38,38,31,53,25,17,15,3,2,35,40,40,29,72,41,15,8,11,13,9,27,44
+401856518,20260320,R64,,Miami,Missouri,Miami,Missouri,80,66,Miami,0.527,True,False,7,10,Dangerous,Dangerous,,,,35,36,89,30,7,9,16,5,5,27,53,43,46,59,46,16,9,19,7,2,26,40
+401856528,20260320,R64,,Villanova,Utah State,Utah State,Villanova,76,86,Villanova,0.531,False,False,9,8,Dangerous,Dangerous,,,,55,13,78,37,9,9,19,4,0,39,37,44,47,46,27,10,9,16,6,0,37,49
+401856522,20260320,R64,,Clemson,Iowa,Iowa,Clemson,61,67,Iowa,0.585,True,False,9,8,Dangerous,Dangerous,,,,38,28,77,40,15,8,5,3,1,25,36,41,35,67,27,10,3,12,4,2,32,35

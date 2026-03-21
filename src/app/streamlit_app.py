@@ -355,6 +355,67 @@ def compute_user_bracket(bkt_df, picks):
     return res
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def run_monte_carlo_sim(r32_pairs_frozen, score_lkp_frozen, n=500_000):
+    """Vectorized 500K Monte Carlo simulation from R32 through Championship.
+
+    r32_pairs_frozen: tuple of 16 (t1, t2) pairs in region order
+      [East×4, South×4, West×4, Midwest×4] with adjacent pairs forming S16 matchups.
+    Returns dict: team → championship win probability.
+    """
+    r32_pairs = list(r32_pairs_frozen)
+    slkp      = dict(score_lkp_frozen)
+
+    # Build flat team list and score/prob arrays
+    team_set = []
+    for t1, t2 in r32_pairs:
+        if t1 and t1 not in team_set: team_set.append(t1)
+        if t2 and t2 not in team_set: team_set.append(t2)
+    n_teams = len(team_set)
+    tidx    = {t: i for i, t in enumerate(team_set)}
+    scores  = np.array([slkp.get(t, 50.0) for t in team_set])
+
+    # Win-probability matrix: prob_mat[i,j] = P(team_i beats team_j)
+    diff     = scores[:, None] - scores[None, :]          # (n_teams, n_teams)
+    prob_mat = 1.0 / (1.0 + np.exp(-diff / 8.0))         # sigmoid
+
+    # Convert r32 pairs to index arrays
+    valid   = [(t1, t2) for t1, t2 in r32_pairs if t1 and t2]
+    r32_t1  = np.array([tidx[t1] for t1, _ in valid])    # (16,)
+    r32_t2  = np.array([tidx[t2] for _, t2 in valid])    # (16,)
+
+    # ── R32 ──────────────────────────────────────────────────────────────────
+    r32_p   = prob_mat[r32_t1, r32_t2]                   # (16,)
+    r32_rng = np.random.random((n, len(valid)))
+    r32_win = np.where(r32_rng < r32_p, r32_t1, r32_t2)  # (n, 16) - winners as ints
+
+    # ── S16: adjacent pairs of R32 winners ───────────────────────────────────
+    s16_t1 = r32_win[:, 0::2]                             # (n, 8)
+    s16_t2 = r32_win[:, 1::2]                             # (n, 8)
+    s16_p  = prob_mat[s16_t1, s16_t2]                    # (n, 8) advanced indexing
+    s16_win = np.where(np.random.random((n, 8)) < s16_p, s16_t1, s16_t2)  # (n, 8)
+
+    # ── E8: adjacent pairs of S16 winners ────────────────────────────────────
+    e8_t1 = s16_win[:, 0::2]                              # (n, 4) — one per region
+    e8_t2 = s16_win[:, 1::2]                              # (n, 4)
+    e8_p  = prob_mat[e8_t1, e8_t2]
+    e8_win = np.where(np.random.random((n, 4)) < e8_p, e8_t1, e8_t2)  # (n, 4)
+    # Columns: East(0), South(1), West(2), Midwest(3)
+
+    # ── FF: East vs Midwest (cols 0,3), South vs West (cols 1,2) ─────────────
+    ff_t1 = e8_win[:, [0, 1]]                             # (n, 2)
+    ff_t2 = e8_win[:, [3, 2]]
+    ff_p  = prob_mat[ff_t1, ff_t2]
+    ff_win = np.where(np.random.random((n, 2)) < ff_p, ff_t1, ff_t2)  # (n, 2)
+
+    # ── Championship ─────────────────────────────────────────────────────────
+    ch_p   = prob_mat[ff_win[:, 0], ff_win[:, 1]]
+    champs = np.where(np.random.random(n) < ch_p, ff_win[:, 0], ff_win[:, 1])
+
+    counts = np.bincount(champs, minlength=n_teams)
+    return {team_set[i]: float(counts[i]) / n for i in range(n_teams) if counts[i] > 0}
+
+
 def build_round_matchups(bkt_df):
     """Return matchups for every round as a dict: round → list of (t1, t2, winner, loser, region)."""
     rounds = {"R64": [], "R32": [], "S16": [], "E8": [], "FF": [], "Championship": []}
@@ -672,31 +733,35 @@ COACH_COLS = ["team","coach","coach_years_at_school","coach_ncaa_games",
 
 # Module-level so all functions (including cached ones) can reference it without scope issues
 _BRACKET_NORM = {
-    # Sample-data aliases → bracket_analysis_2026.csv canonical names
-    "BYU": "BYU",
-    "TCU": "TCU",
-    "Saint Marys CA": "Saint Marys CA",
+    # Short/alternate names → team_scores_2026.csv canonical names
+    # (used by _smart_norm in load_data to reconcile bracket → scores)
+    "BYU": "Brigham Young",
+    "TCU": "Texas Christian",
+    "VCU": "Virginia Commonwealth",
+    "Saint Marys CA": "Saint Mary's",
+    "St. Johns": "St. John's",
+    "St Johns": "St. John's",
+    "St Johns NY": "St. John's",
+    "NC State": "North Carolina State",
+    "N.C. State": "North Carolina State",
     "Miami FL": "Miami",
-    "VCU": "VCU",
+    "Miami (FL)": "Miami",
     "SMU": "Southern Methodist",
-    "St Johns NY": "St. Johns",
     "Pitt": "Pittsburgh",
     "UMBC": "Maryland-Baltimore County",
     "LIU": "Long Island University",
-    "St. Mary's": "Saint Marys CA",
-    "Saint John's": "St. Johns",
-    "NC State": "NC State",
-    "N.C. State": "NC State",
-    "Miami (FL)": "Miami",
+    "St. Mary's": "Saint Mary's",
+    "Saint John's": "St. John's",
     "McNeese State": "McNeese State",
     "Prairie View": "Prairie View A&M",
-    # ESPN display names → exact bracket_analysis_2026.csv canonical names
-    "TCU Horned Frogs": "TCU",
-    "BYU Cougars": "BYU",
-    "VCU Rams": "VCU",
+    # ESPN display names → team_scores_2026.csv canonical names
+    # All maps target team_scores so score_lkp lookups work correctly
+    "TCU Horned Frogs": "Texas Christian",
+    "BYU Cougars": "Brigham Young",
+    "VCU Rams": "Virginia Commonwealth",
     "SMU Mustangs": "Southern Methodist",
-    "Saint Mary's Gaels": "Saint Marys CA",
-    "Saint Mary's (CA)": "Saint Marys CA",
+    "Saint Mary's Gaels": "Saint Mary's",
+    "Saint Mary's (CA)": "Saint Mary's",
     "Duke Blue Devils": "Duke",
     "Michigan Wolverines": "Michigan",
     "Michigan State Spartans": "Michigan State",
@@ -726,20 +791,19 @@ _BRACKET_NORM = {
     "Texas Tech Red Raiders": "Texas Tech",
     "Connecticut Huskies": "Connecticut",
     "UConn Huskies": "Connecticut",
-    "St. John's Red Storm": "St. Johns",
-    "St John's Red Storm": "St. Johns",
+    "St. John's Red Storm": "St. John's",
+    "St John's Red Storm": "St. John's",
     "UCLA Bruins": "UCLA",
     "Villanova Wildcats": "Villanova",
     "Miami Hurricanes": "Miami",
-    "North Carolina State Wolfpack": "NC State",
-    "NC State Wolfpack": "NC State",
+    "North Carolina State Wolfpack": "North Carolina State",
+    "NC State Wolfpack": "North Carolina State",
     "Siena Saints": "Siena",
     "Howard Bison": "Howard",
     "North Dakota State Bison": "North Dakota State",
     "High Point Panthers": "High Point",
     "McNeese Cowboys": "McNeese State",
     "Troy Trojans": "Troy",
-    "South Florida Bulls": "South Florida",
     "Pennsylvania Quakers": "Pennsylvania",
     "Hawai'i Rainbow Warriors": "Hawaii",
     "Hawaii Rainbow Warriors": "Hawaii",
@@ -756,9 +820,13 @@ _BRACKET_NORM = {
     "Long Island University Sharks": "Long Island University",
     "Queens Royals": "Queens",
     "California Baptist Lancers": "California Baptist",
-    "Prairie View A&M Panthers": "Prairie View A&M",
-    # Explicit mappings to prevent fuzzy-match false positives
-    # ("South Florida Bulls" would otherwise match "Florida" via substring)
+    "Prairie View A&M Panthers": "Prairie View",
+    "Prairie View A&M":          "Prairie View",
+    # UCF → Central Florida (canonical name in team_scores_2026.csv)
+    "UCF":                       "Central Florida",
+    "UCF Knights":               "Central Florida",
+    # Explicit anti-fuzzy-match entries — prevent short names from
+    # matching unrelated teams via substring (e.g. "South Florida" ≠ "Florida")
     "South Florida Bulls": "South Florida",
     "Central Florida Knights": "Central Florida",
     "Florida State Seminoles": "Florida State",
@@ -766,7 +834,6 @@ _BRACKET_NORM = {
     "Western Kentucky Hilltoppers": "Western Kentucky",
     "Miami (OH) RedHawks": "Miami OH",
     "Northern Iowa Panthers": "Northern Iowa",
-    "UCF Knights": "UCF",
 }
 
 # Seed → estimated contender score for teams NOT in bracket_analysis_2026.csv.
@@ -818,6 +885,17 @@ if len(scores) == 0:
 if len(bracket) > 0:
     bracket_info = bracket[["team","region","seed"]].copy()
     scores = scores.merge(bracket_info, on="team", how="left")
+    # Add bracket teams not in team_scores (e.g. Miami OH, play-in winners)
+    # so they appear in in_bracket with seed-based score estimates
+    _already = set(scores["team"].tolist())
+    _missing_rows = []
+    for _, _br in bracket_info.iterrows():
+        if _br["team"] not in _already:
+            _seed_est = _SEED_SCORE_FALLBACK.get(int(_br["seed"]) if pd.notna(_br["seed"]) else 0, 50)
+            _missing_rows.append({"team": _br["team"], "region": _br["region"],
+                                   "seed": _br["seed"], "contender_score": _seed_est})
+    if _missing_rows:
+        scores = pd.concat([scores, pd.DataFrame(_missing_rows)], ignore_index=True)
     in_bracket = scores[scores["seed"].notna()].copy()
     in_bracket["seed"] = in_bracket["seed"].astype(int)
 else:
@@ -2178,6 +2256,40 @@ with tab5:
                     f'<div style="color:#94a3b8;font-size:0.78rem;margin-top:4px">vs #{ds} {dog} ({dog_p*100:.0f}%)</div>'
                     f'{flag_line}'
                     f'</div>', unsafe_allow_html=True)
+
+        # ── 500K Monte Carlo Simulation ─────────────────────────────────────
+        _r32_pairs = [(m["t1"], m["t2"]) for m in live_rounds["R32"] if m.get("t1") and m.get("t2")]
+        if len(_r32_pairs) == 16:
+            # Build score lookup from all 32 teams still in bracket (actual R64 winners)
+            _mc_score_lkp = {}
+            for _mm in live_rounds["R32"]:
+                for _tt in [_mm.get("t1",""), _mm.get("t2","")]:
+                    if _tt:
+                        _mc_score_lkp[_tt] = safe_f(_adapted_scores.get(_tt, 50))
+            _mc_probs = run_monte_carlo_sim(
+                tuple(_r32_pairs),
+                tuple(sorted(_mc_score_lkp.items())),
+                n=500_000
+            )
+            if _mc_probs:
+                _mc_sorted = sorted(_mc_probs.items(), key=lambda x: x[1], reverse=True)[:16]
+                st.markdown('<div class="section-header">🎲 500,000-Game Simulation — Championship Odds</div>', unsafe_allow_html=True)
+                st.caption("Simulated from Round of 32 using adapted model scores. Probabilities update as results come in.")
+                _mc_cols = st.columns(4)
+                for _mci, (_mct, _mcp) in enumerate(_mc_sorted):
+                    _col = _mc_cols[_mci % 4]
+                    with _col:
+                        _bar_w = int(_mcp * 100)
+                        _seed_r = in_bracket[in_bracket["team"] == _mct]["seed"].values
+                        _seed_d = int(_seed_r[0]) if len(_seed_r) else "?"
+                        st.markdown(
+                            f'<div style="background:#0f1419;border:1px solid #1e293b;border-radius:6px;padding:6px 10px;margin:3px 0">'
+                            f'<div style="color:#f1f5f9;font-weight:700;font-size:0.82rem">#{_seed_d} {_mct}</div>'
+                            f'<div style="background:#1e293b;border-radius:3px;height:5px;margin:4px 0">'
+                            f'<div style="width:{_bar_w}%;background:#f97316;height:5px;border-radius:3px"></div></div>'
+                            f'<div style="color:#f97316;font-size:0.78rem;font-weight:600">{_mcp*100:.1f}%</div>'
+                            f'</div>', unsafe_allow_html=True)
+                st.markdown("---")
 
         # ── Round tabs ───────────────────────────────────────────────────────
         br_r64, br_r32, br_s16, br_e8, br_ff, br_champ = st.tabs([

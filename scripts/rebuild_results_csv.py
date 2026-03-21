@@ -1,5 +1,5 @@
-"""Rebuild game_results_2026.csv from ESPN using correct team name normalization
-and seed-based score fallback for teams not in bracket_analysis_2026.csv."""
+"""Rebuild game_results_2026.csv from ESPN using team_scores_2026.csv canonical names
+and seed-based score fallback for teams not in the scores file."""
 import math, pandas as pd, requests, os
 
 def safe_f(v, d=0.0):
@@ -11,21 +11,54 @@ def win_prob(a, b, k=0.18):
     except: return 0.5
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-bkt_df = pd.read_csv(os.path.join(ROOT, 'data/outputs/bracket_analysis_2026.csv'))
-bracket_teams = set(bkt_df['team'].tolist())
-score_lkp = {}; seed_lkp = {}; flag_lkp = {}
-for _, r in bkt_df.iterrows():
+
+# ── Load both source files ───────────────────────────────────────────────────
+scores_df  = pd.read_csv(os.path.join(ROOT, 'data/outputs/team_scores_2026.csv'))
+bracket_df = pd.read_csv(os.path.join(ROOT, 'data/outputs/bracket_analysis_2026.csv'))
+
+# Normalize bracket short names → team_scores canonical names
+# (mirrors _BRACKET_NORM + _smart_norm in the app)
+_BKTSHORT = {
+    "NC State":      "North Carolina State",
+    "BYU":           "Brigham Young",
+    "St. Johns":     "St. John's",
+    "Saint Marys CA":"Saint Mary's",
+}
+score_teams = set(scores_df['team'])
+
+def norm_bracket_name(t):
+    if t in score_teams:
+        return t
+    return _BKTSHORT.get(t, t)
+
+bracket_df['team'] = bracket_df['team'].apply(norm_bracket_name)
+
+# Merge bracket seeds into scores so in_bracket has canonical names + seed
+scores_merged = scores_df.merge(
+    bracket_df[['team','region','seed']].dropna(subset=['seed']),
+    on='team', how='left'
+)
+in_bracket = scores_merged[scores_merged['seed'].notna()].copy()
+in_bracket['seed'] = in_bracket['seed'].astype(int)
+
+# Score lookup: ALL teams in team_scores (so VCU/Virginia Commonwealth etc. get real scores)
+score_lkp = dict(zip(scores_df['team'], scores_df['contender_score'].apply(lambda x: safe_f(x, 50))))
+seed_lkp  = dict(zip(in_bracket['team'], in_bracket['seed']))
+bracket_teams = set(in_bracket['team'])
+
+flag_lkp = {}
+for _, r in in_bracket.iterrows():
     t = str(r['team'])
-    score_lkp[t] = safe_f(r.get('contender_score', 50), 50)
-    seed_lkp[t] = int(r['seed']) if pd.notna(r.get('seed')) else 0
     flags = []
     if r.get('fraud_favorite_flag'): flags.append('Fraud Fav')
-    if r.get('cinderella_flag'): flags.append('Cinderella')
+    if r.get('cinderella_flag'):     flags.append('Cinderella')
     if r.get('dangerous_low_seed_flag'): flags.append('Dangerous')
-    if r.get('underseeded_flag'): flags.append('Underseeded')
+    if r.get('underseeded_flag'):    flags.append('Underseeded')
     flag_lkp[t] = ', '.join(flags)
 
-# Seed -> estimated contender score for teams NOT in bracket_analysis_2026.csv
+print(f"Loaded {len(in_bracket)} seeded teams | {len(score_lkp)} total score entries")
+
+# Seed → estimated contender score fallback for teams not in scores file at all
 SEED_FALLBACK = {
     1: 79, 2: 74, 3: 71, 4: 68, 5: 65,
     6: 63, 7: 61, 8: 58, 9: 56, 10: 54,
@@ -37,89 +70,97 @@ def score_for(team, espn_seed):
         return score_lkp[team]
     return SEED_FALLBACK.get(int(espn_seed or 0), 50)
 
-# Maps ESPN display names -> exact bracket_analysis_2026.csv team names
+# ── ESPN display name → team_scores canonical name ───────────────────────────
 NORM = {
-    "Duke Blue Devils": "Duke",
-    "Michigan Wolverines": "Michigan",
-    "Houston Cougars": "Houston",
-    "Michigan State Spartans": "Michigan State",
-    "Illinois Fighting Illini": "Illinois",
-    "Gonzaga Bulldogs": "Gonzaga",
-    "Nebraska Cornhuskers": "Nebraska",
-    "Arkansas Razorbacks": "Arkansas",
-    "High Point Panthers": "High Point",
-    "Vanderbilt Commodores": "Vanderbilt",
-    "McNeese Cowboys": "McNeese State",
-    "Louisville Cardinals": "Louisville",
-    "VCU Rams": "VCU",
-    "North Carolina Tar Heels": "North Carolina",
-    "Texas Longhorns": "Texas",
-    "Texas A&M Aggies": "Texas A&M",
-    "TCU Horned Frogs": "TCU",
-    "Ohio State Buckeyes": "Ohio State",
-    "Georgia Bulldogs": "Georgia",
-    "Saint Louis Billikens": "Saint Louis",
-    "Arizona Wildcats": "Arizona",
-    "Florida Gators": "Florida",
-    "Iowa State Cyclones": "Iowa State",
-    "Purdue Boilermakers": "Purdue",
-    "Connecticut Huskies": "Connecticut",
-    "UConn Huskies": "Connecticut",
-    "Virginia Cavaliers": "Virginia",
-    "Alabama Crimson Tide": "Alabama",
-    "Kansas Jayhawks": "Kansas",
-    "Texas Tech Red Raiders": "Texas Tech",
-    "St. John's Red Storm": "St. Johns",
-    "St John's Red Storm": "St. Johns",
-    "Tennessee Volunteers": "Tennessee",
-    "Kentucky Wildcats": "Kentucky",
-    "UCLA Bruins": "UCLA",
-    "Missouri Tigers": "Missouri",
-    "Wisconsin Badgers": "Wisconsin",
-    "Iowa Hawkeyes": "Iowa",
-    "BYU Cougars": "BYU",
-    "Villanova Wildcats": "Villanova",
-    "Miami Hurricanes": "Miami",
-    "Clemson Tigers": "Clemson",
-    "Utah State Aggies": "Utah State",
-    "Akron Zips": "Akron",
-    "Saint Mary's Gaels": "Saint Marys CA",
-    "Idaho Vandals": "Idaho",
-    "North Dakota State Bison": "North Dakota State",
-    "Pennsylvania Quakers": "Pennsylvania",
-    "Kennesaw State Owls": "Kennesaw State",
-    "Troy Trojans": "Troy",
-    "Hawai'i Rainbow Warriors": "Hawaii",
-    "North Carolina State Wolfpack": "NC State",
-    "Siena Saints": "Siena",
-    "Howard Bison": "Howard",
-    "Hofstra Pride": "Hofstra",
-    "Wright State Raiders": "Wright State",
-    "Furman Paladins": "Furman",
+    "TCU Horned Frogs":              "Texas Christian",
+    "BYU Cougars":                   "Brigham Young",
+    "VCU Rams":                      "Virginia Commonwealth",
+    "SMU Mustangs":                  "Southern Methodist",
+    "Saint Mary's Gaels":            "Saint Mary's",
+    "Saint Mary's (CA)":             "Saint Mary's",
+    "Duke Blue Devils":              "Duke",
+    "Michigan Wolverines":           "Michigan",
+    "Michigan State Spartans":       "Michigan State",
+    "Ohio State Buckeyes":           "Ohio State",
+    "Nebraska Cornhuskers":          "Nebraska",
+    "Arkansas Razorbacks":           "Arkansas",
+    "Wisconsin Badgers":             "Wisconsin",
+    "Vanderbilt Commodores":         "Vanderbilt",
+    "Louisiana Cardinals":           "Louisville",
+    "Louisville Cardinals":          "Louisville",
+    "North Carolina Tar Heels":      "North Carolina",
+    "Texas Longhorns":               "Texas",
+    "Texas A&M Aggies":              "Texas A&M",
+    "Georgia Bulldogs":              "Georgia",
+    "Iowa State Cyclones":           "Iowa State",
+    "Iowa Hawkeyes":                 "Iowa",
+    "Illinois Fighting Illini":      "Illinois",
+    "Houston Cougars":               "Houston",
+    "Florida Gators":                "Florida",
+    "Arizona Wildcats":              "Arizona",
+    "Purdue Boilermakers":           "Purdue",
+    "Gonzaga Bulldogs":              "Gonzaga",
+    "Kansas Jayhawks":               "Kansas",
+    "Tennessee Volunteers":          "Tennessee",
+    "Virginia Cavaliers":            "Virginia",
+    "Alabama Crimson Tide":          "Alabama",
+    "Kentucky Wildcats":             "Kentucky",
+    "Texas Tech Red Raiders":        "Texas Tech",
+    "Connecticut Huskies":           "Connecticut",
+    "UConn Huskies":                 "Connecticut",
+    "St. John's Red Storm":          "St. John's",
+    "St John's Red Storm":           "St. John's",
+    "UCLA Bruins":                   "UCLA",
+    "Villanova Wildcats":            "Villanova",
+    "Miami Hurricanes":              "Miami",
+    "North Carolina State Wolfpack": "North Carolina State",
+    "NC State Wolfpack":             "North Carolina State",
+    "Siena Saints":                  "Siena",
+    "Howard Bison":                  "Howard",
+    "North Dakota State Bison":      "North Dakota State",
+    "High Point Panthers":           "High Point",
+    "McNeese Cowboys":               "McNeese State",
+    "Troy Trojans":                  "Troy",
+    "Pennsylvania Quakers":          "Pennsylvania",
+    "Hawai'i Rainbow Warriors":      "Hawaii",
+    "Hawaii Rainbow Warriors":       "Hawaii",
+    "Idaho Vandals":                 "Idaho",
+    "Kennesaw State Owls":           "Kennesaw State",
+    "Saint Louis Billikens":         "Saint Louis",
+    "Utah State Aggies":             "Utah State",
+    "Santa Clara Broncos":           "Santa Clara",
+    "Hofstra Pride":                 "Hofstra",
+    "Akron Zips":                    "Akron",
+    "Wright State Raiders":          "Wright State",
+    "Tennessee State Tigers":        "Tennessee State",
+    "Furman Paladins":               "Furman",
     "Long Island University Sharks": "Long Island University",
-    "California Baptist Lancers": "California Baptist",
-    "Prairie View A&M Panthers": "Prairie View A&M",
-    "Queens Royals": "Queens",
-    "Santa Clara Broncos": "Santa Clara",
-    # Explicit anti-fuzzy-match mappings
-    "South Florida Bulls": "South Florida",
-    "Miami (OH) RedHawks": "Miami OH",
-    "Northern Iowa Panthers": "Northern Iowa",
-    "UCF Knights": "UCF",
-    "Tennessee State Tigers": "Tennessee State",
+    "California Baptist Lancers":    "California Baptist",
+    "Prairie View A&M Panthers":     "Prairie View",
+    "Prairie View A&M":              "Prairie View",
+    "Queens Royals":                 "Queens",
+    # UCF → Central Florida (canonical name in team_scores)
+    "UCF Knights":                   "Central Florida",
+    "UCF":                           "Central Florida",
+    # Anti-fuzzy-match: explicit so South Florida != Florida, etc.
+    "South Florida Bulls":           "South Florida",
+    "Central Florida Knights":       "Central Florida",
+    "Florida State Seminoles":       "Florida State",
+    "Florida Atlantic Owls":         "Florida Atlantic",
+    "Miami (OH) RedHawks":           "Miami OH",
+    "Northern Iowa Panthers":        "Northern Iowa",
 }
 
 def norm(raw):
     n = NORM.get(raw, raw)
-    if n in bracket_teams:
+    if n in score_lkp:
         return n
-    # Fuzzy fallback — but only if the raw name isn't already explicitly handled above
-    if raw in NORM:
-        return n  # already mapped; don't fuzzy further
-    matches = [bt for bt in bracket_teams
-               if bt.lower() in raw.lower() or raw.lower() in bt.lower()]
-    if matches:
-        return max(matches, key=len)
+    # Fuzzy only for unmapped names
+    if raw not in NORM:
+        matches = [bt for bt in score_lkp
+                   if bt.lower() in raw.lower() or raw.lower() in bt.lower()]
+        if matches:
+            return max(matches, key=len)
     return n
 
 ESPN_SCOREBOARD = 'https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard?groups=50&limit=50'
@@ -153,8 +194,19 @@ def fetch_box(eid):
     except Exception:
         return {}
 
+TOURNEY_DATES = [
+    '20260319', '20260320', '20260321', '20260322', '20260323',
+    '20260324', '20260325', '20260327', '20260328', '20260329',
+    '20260330', '20260404', '20260405', '20260407',
+]
+
+from datetime import datetime
+today_str = datetime.now().strftime('%Y%m%d')
+
 seen = {}
-for d in ['20260319', '20260320']:
+for d in TOURNEY_DATES:
+    if d > today_str:
+        break
     resp = requests.get(ESPN_SCOREBOARD + f'&dates={d}', timeout=6,
                         headers={'User-Agent': 'statlasberg/1.0'})
     for event in resp.json().get('events', []):
@@ -177,8 +229,8 @@ for d in ['20260319', '20260320']:
         t2_seed = t2c.get('curatedRank', {}).get('current', 0) or 0
         winner = t1n if sc1 >= sc2 else t2n
         loser  = t2n if sc1 >= sc2 else t1n
-        winner_seed = t1_seed if sc1 >= sc2 else t2_seed
-        loser_seed  = t2_seed if sc1 >= sc2 else t1_seed
+        w_seed = t1_seed if sc1 >= sc2 else t2_seed
+        l_seed = t2_seed if sc1 >= sc2 else t1_seed
         hl = comp.get('notes', [{}])[0].get('headline', '')
         box = fetch_box(eid)
         seen[eid] = {
@@ -186,7 +238,7 @@ for d in ['20260319', '20260320']:
             't1': t1n, 't2': t2n, 'winner': winner, 'loser': loser,
             't1_score': sc1, 't2_score': sc2,
             't1_espn_seed': t1_seed, 't2_espn_seed': t2_seed,
-            'winner_espn_seed': winner_seed, 'loser_espn_seed': loser_seed,
+            'winner_espn_seed': w_seed, 'loser_espn_seed': l_seed,
             **box,
         }
 
@@ -195,15 +247,26 @@ for eid, g in seen.items():
     t1, t2 = g['t1'], g['t2']
     winner, loser = g['winner'], g['loser']
     hl = g.get('headline', '').lower()
-    rnd = 'FF4' if 'first four' in hl else 'R64'
+    if   'first four'   in hl: rnd = 'FF4'
+    elif 'second round' in hl or 'round of 32' in hl: rnd = 'R32'
+    elif 'sweet 16'     in hl or 'sweet sixteen' in hl: rnd = 'S16'
+    elif 'elite 8'      in hl or 'elite eight'   in hl: rnd = 'E8'
+    elif 'final four'   in hl: rnd = 'FF'
+    elif 'national championship' in hl or 'championship game' in hl: rnd = 'Championship'
+    elif g.get('date','') in ('20260321','20260322','20260323'): rnd = 'R32'
+    elif g.get('date','') in ('20260324','20260325'): rnd = 'S16'
+    elif g.get('date','') in ('20260327','20260328'): rnd = 'E8'
+    elif g.get('date','') in ('20260404','20260405'): rnd = 'FF'
+    elif g.get('date','') == '20260407': rnd = 'Championship'
+    else: rnd = 'R64'
 
     s1 = score_for(t1, g.get('t1_espn_seed', 0))
     s2 = score_for(t2, g.get('t2_espn_seed', 0))
     mw = t1 if win_prob(s1, s2) >= 0.5 else t2
     ml = t2 if mw == t1 else t1
-    mw_seed = g.get('t1_espn_seed', 0) if mw == t1 else g.get('t2_espn_seed', 0)
-    ml_seed = g.get('t2_espn_seed', 0) if mw == t1 else g.get('t1_espn_seed', 0)
-    mc = win_prob(score_for(mw, mw_seed), score_for(ml, ml_seed))
+    mw_s = g.get('t1_espn_seed', 0) if mw == t1 else g.get('t2_espn_seed', 0)
+    ml_s = g.get('t2_espn_seed', 0) if mw == t1 else g.get('t1_espn_seed', 0)
+    mc = win_prob(score_for(mw, mw_s), score_for(ml, ml_s))
     correct = (winner == mw)
 
     ws = seed_lkp.get(winner, g.get('winner_espn_seed', 0))
@@ -230,10 +293,12 @@ for eid, g in seen.items():
 df = pd.DataFrame(rows)
 correct_n = int(df['correct'].sum())
 total_n = len(df)
-print(f"Record: {correct_n}-{total_n - correct_n} ({total_n} games)\n")
+print(f"\nRecord: {correct_n}-{total_n - correct_n} ({total_n} games)\n")
 for _, r in df.iterrows():
     st = '✅' if r['correct'] else '❌'
-    print(f"  {st} {r['winner']:30} def {r['loser']:30} | model: {r['model_pick']:30} @ {r['model_conf']:.0%}")
+    print(f"  {st} {r['winner']:30} ({score_for(r['winner'], r.get('winner_seed',0)):.1f}) def "
+          f"{r['loser']:25} ({score_for(r['loser'], r.get('loser_seed',0)):.1f}) "
+          f"| pick: {r['model_pick']:30} @ {r['model_conf']:.0%}")
 
 out = os.path.join(ROOT, 'data/outputs/game_results_2026.csv')
 df.to_csv(out, index=False)
