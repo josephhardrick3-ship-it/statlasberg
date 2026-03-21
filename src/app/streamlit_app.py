@@ -428,13 +428,43 @@ def build_round_matchups(bkt_df):
     return rounds
 
 
-def build_bracket_live(bkt_df, recap_df):
+def _compute_adapted_scores(bkt_df, recap_df):
+    """Return contender score lookup adjusted for actual game results.
+
+    When a team wins as a model underdog, boost their effective score toward
+    their opponent's — making future projections more accurate as results come in.
+    Winners of expected results get a small confidence bump.
+    """
+    base = {r["team"]: safe_f(r.get("contender_score", 50)) for _, r in bkt_df.iterrows()}
+    adj = base.copy()
+    if recap_df is None or recap_df.empty:
+        return adj
+    for _, row in recap_df.iterrows():
+        w = str(row.get("winner", "") or "").strip()
+        l = str(row.get("loser",  "") or "").strip()
+        if not w or not l or w not in adj or l not in adj:
+            continue
+        ws = adj[w]; ls = adj[l]
+        if ls > ws:                              # upset — winner had lower score
+            adj[w] = ws + (ls - ws) * 0.45      # 45% pull toward beaten opponent's score
+            adj[l] = ls - (ls - ws) * 0.20      # loser docked slightly
+        else:                                    # expected result
+            adj[w] = ws + 1.0                   # small confidence bump for winner
+    return adj
+
+
+def build_bracket_live(bkt_df, recap_df, adapted_scores=None):
     """Build round matchups overlaying actual results on top of model projections.
+
+    Uses adapted_scores (Bayesian-updated contender scores) for future-round
+    projections so the simulation improves as results come in.
 
     Returns dict: round -> list of matchup dicts with keys:
       t1, t2, s1, s2, winner, loser, region, winner_p, model_winner, completed, model_correct
     """
-    score_lkp = {r["team"]: safe_f(r.get("contender_score", 50)) for _, r in bkt_df.iterrows()}
+    # Use adapted scores for projections if provided, raw scores for model_winner baseline
+    score_lkp = adapted_scores if adapted_scores is not None else \
+                {r["team"]: safe_f(r.get("contender_score", 50)) for _, r in bkt_df.iterrows()}
     seed_lkp  = {r["team"]: (int(r["seed"]) if pd.notna(r.get("seed")) else 0) for _, r in bkt_df.iterrows()}
 
     actual = {}  # frozenset({winner, loser}) → winner
@@ -1555,236 +1585,7 @@ with tab4:
 # ─────────────────────────────────────────────────────────────────────────────
 # TAB 5 — INTERACTIVE BRACKET
 # ─────────────────────────────────────────────────────────────────────────────
-with tab5:
-    st.markdown('<div class="section-header">🏆 2026 NCAA Tournament Bracket</div>', unsafe_allow_html=True)
-    st.caption("Model predictions · Live results update as games complete · Simulations adjust automatically")
 
-    BRACKET_PAIRS = [(1, 16), (8, 9), (5, 12), (4, 13), (6, 11), (3, 14), (7, 10), (2, 15)]
-
-    if "region" not in in_bracket.columns or len(in_bracket) == 0:
-        st.warning("Bracket data not loaded.")
-    else:
-        all_round_matchups = build_round_matchups(in_bracket)
-
-        # Load actual results from persistent CSV (written by Recap tab on each refresh)
-        try:
-            if os.path.exists(_RESULTS_CSV):
-                _bkt_recap = pd.read_csv(_RESULTS_CSV)
-                for _c in ("winner_flags", "loser_flags", "winner", "loser", "round", "region", "narrative"):
-                    if _c in _bkt_recap.columns:
-                        _bkt_recap[_c] = _bkt_recap[_c].fillna("").astype(str)
-                if "correct" in _bkt_recap.columns:
-                    _bkt_recap["correct"] = pd.to_numeric(_bkt_recap["correct"], errors="coerce").fillna(0).astype(int)
-            else:
-                _bkt_recap = pd.DataFrame()
-        except Exception:
-            _bkt_recap = pd.DataFrame()
-
-        live_rounds = build_bracket_live(in_bracket, _bkt_recap)
-
-        # ── Record header ────────────────────────────────────────────────────
-        if not _bkt_recap.empty and "correct" in _bkt_recap.columns:
-            _total_bkt = len(_bkt_recap)
-            _correct_bkt = int(_bkt_recap["correct"].sum())
-            _pct_bkt = _correct_bkt / _total_bkt * 100 if _total_bkt else 0
-            _streak_bkt = 0
-            for _cv in _bkt_recap.sort_values("date", ascending=False)["correct"].tolist():
-                if _cv:
-                    _streak_bkt += 1
-                else:
-                    break
-            _hc = st.columns(4)
-            _hc[0].metric("🤖 Statlasberg Record", f"{_correct_bkt}–{_total_bkt - _correct_bkt}", f"{_pct_bkt:.0f}%")
-            _hc[1].metric("🔥 Streak", f"W{_streak_bkt}" if _streak_bkt > 0 else "—")
-            _rnd_strs_bkt = []
-            for _rnd_bkt in ["R64", "R32", "S16", "E8", "FF"]:
-                _rdf_bkt = _bkt_recap[_bkt_recap["round"] == _rnd_bkt]
-                if len(_rdf_bkt):
-                    _rnd_strs_bkt.append(f"{_rnd_bkt} {int(_rdf_bkt['correct'].sum())}/{len(_rdf_bkt)}")
-            _hc[2].metric("📊 By Round", " · ".join(_rnd_strs_bkt) or "—")
-            _hc[3].metric("🎯 Confidence", "HIGH" if _pct_bkt > 75 else "MODERATE" if _pct_bkt > 60 else "CALIBRATING")
-            st.markdown("---")
-
-        # ── Helper: render one matchup card ─────────────────────────────────
-        def _bkt_card(m):
-            t1 = m.get("t1", ""); t2 = m.get("t2", "")
-            s1 = m.get("s1", 0);  s2 = m.get("s2", 0)
-            winner = m.get("winner", ""); loser = m.get("loser", "")
-            mw     = m.get("model_winner", winner)
-            wp     = m.get("winner_p", 0.5)
-            done   = m.get("completed", False)
-            ok     = m.get("model_correct")
-            if not t1 and not t2:
-                return
-
-            if done:
-                # ── completed game ────────────────────────────────────────
-                w_seed = s1 if winner == t1 else s2
-                l_seed = s2 if winner == t1 else s1
-                verdict = "Called it ✓" if ok else f"Missed — had {mw}"
-                v_color = "#4ade80" if ok else "#f87171"
-                border  = "#4ade80" if ok else "#ef4444"
-                st.markdown(
-                    f'<div style="background:#0f1a12;border:2px solid {border};border-radius:8px;padding:8px 12px;margin:3px 0">'
-                    f'<div style="color:#4ade80;font-weight:800;font-size:1rem">🏆 #{w_seed} {winner}</div>'
-                    f'<div style="color:#64748b;font-size:0.78rem;margin-top:2px">def. #{l_seed} {loser}</div>'
-                    f'<div style="color:{v_color};font-size:0.72rem;margin-top:4px">{verdict} · {wp*100:.0f}% conf</div>'
-                    f'</div>', unsafe_allow_html=True)
-            else:
-                # ── model projection ──────────────────────────────────────
-                t1_row = in_bracket[in_bracket["team"] == t1]
-                t2_row = in_bracket[in_bracket["team"] == t2]
-                c1 = safe_f(t1_row.iloc[0].get("contender_score", 50)) if len(t1_row) else 50
-                c2 = safe_f(t2_row.iloc[0].get("contender_score", 50)) if len(t2_row) else 50
-                p1 = win_prob_sigmoid(c1, c2); p2 = 1 - p1
-                fav   = t1 if p1 >= p2 else t2
-                fav_p = max(p1, p2)
-                dog   = t2 if p1 >= p2 else t1
-                dog_p = min(p1, p2)
-                fs    = s1 if fav == t1 else s2
-                ds    = s2 if fav == t1 else s1
-                fav_row = t1_row.iloc[0] if len(t1_row) and fav == t1 else (t2_row.iloc[0] if len(t2_row) else None)
-                hl = hot_label(fav_row) if fav_row is not None else ""
-                hl_span = f' <span style="color:#4ade80;font-size:0.65rem">{hl}</span>' if hl else ""
-                flags = []
-                for _tn, _tr in [(t1, t1_row), (t2, t2_row)]:
-                    if len(_tr):
-                        r = _tr.iloc[0]
-                        if r.get("fraud_favorite_flag"):      flags.append(f"⚠️ {_tn}")
-                        if r.get("cinderella_flag"):           flags.append(f"🪄 {_tn}")
-                        if r.get("dangerous_low_seed_flag"):   flags.append(f"💥 {_tn}")
-                flag_line = (f'<div style="color:#f59e0b;font-size:0.68rem;margin-top:3px">'
-                             f'{" · ".join(flags)}</div>') if flags else ""
-                st.markdown(
-                    f'<div style="background:#131820;border:2px solid #f97316;border-radius:8px;padding:8px 12px;margin:3px 0">'
-                    f'<div style="color:#f1f5f9;font-weight:800;font-size:0.95rem">#{fs} {fav}{hl_span}</div>'
-                    f'<div style="background:#1e293b;border-radius:3px;height:4px;margin:4px 0">'
-                    f'<div style="width:{int(fav_p*100)}%;background:#f97316;height:4px;border-radius:3px"></div></div>'
-                    f'<div style="color:#f97316;font-weight:700;font-size:0.85rem">{fav_p*100:.0f}% · {american_line(fav_p)}</div>'
-                    f'<div style="color:#94a3b8;font-size:0.78rem;margin-top:4px">vs #{ds} {dog} ({dog_p*100:.0f}%)</div>'
-                    f'{flag_line}'
-                    f'</div>', unsafe_allow_html=True)
-
-        # ── Round tabs ───────────────────────────────────────────────────────
-        br_r64, br_r32, br_s16, br_e8, br_ff, br_champ = st.tabs([
-            "R64", "R32", "Sweet 16", "Elite 8", "Final Four", "🏆 Championship"
-        ])
-
-        with br_r64:
-            _done_r64  = sum(1 for m in live_rounds["R64"] if m.get("completed"))
-            _total_r64 = len(live_rounds["R64"])
-            st.caption(f"Round of 64 · {_done_r64}/{_total_r64} games complete")
-            _r64_cols = st.columns(4)
-            for _ri, _region in enumerate(["East", "South", "West", "Midwest"]):
-                with _r64_cols[_ri]:
-                    _top1 = in_bracket[(in_bracket["region"] == _region) & (in_bracket["seed"] == 1)]
-                    _top1_name = _top1.iloc[0]["team"] if len(_top1) else "TBD"
-                    st.markdown(
-                        f'<div style="color:#ff8c3a;font-weight:800;font-size:0.85rem;border-bottom:2px solid #f97316;'
-                        f'padding-bottom:3px;margin-bottom:10px;text-transform:uppercase">{_region}<br/>'
-                        f'<span style="color:#94a3b8;font-size:0.75rem;font-weight:400">#1 {_top1_name}</span></div>',
-                        unsafe_allow_html=True)
-                    for _m in [m for m in live_rounds["R64"] if m.get("region") == _region]:
-                        _s1_h = _m.get("s1", 0); _s2_h = _m.get("s2", 0)
-                        st.markdown(f'<div style="color:#475569;font-size:0.68rem;margin-top:6px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
-                        _bkt_card(_m)
-
-        with br_r32:
-            _done_r32  = sum(1 for m in live_rounds["R32"] if m.get("completed"))
-            _total_r32 = len(live_rounds["R32"])
-            st.caption(f"Round of 32 · {_done_r32}/{_total_r32} games complete")
-            _r32_cols = st.columns(4)
-            for _ri2, _region in enumerate(["East", "South", "West", "Midwest"]):
-                with _r32_cols[_ri2]:
-                    st.markdown(
-                        f'<div style="color:#ff8c3a;font-weight:700;font-size:0.8rem;border-bottom:1px solid #f97316;'
-                        f'padding-bottom:2px;margin-bottom:8px;text-transform:uppercase">{_region}</div>',
-                        unsafe_allow_html=True)
-                    for _m in [m for m in live_rounds["R32"] if m.get("region") == _region]:
-                        _s1_h = _m.get("s1", 0); _s2_h = _m.get("s2", 0)
-                        st.markdown(f'<div style="color:#475569;font-size:0.68rem;margin-top:6px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
-                        _bkt_card(_m)
-
-        with br_s16:
-            _done_s16 = sum(1 for m in live_rounds["S16"] if m.get("completed"))
-            st.caption(f"Sweet 16 · {_done_s16}/{len(live_rounds['S16'])} games complete")
-            _s16_cols = st.columns(2)
-            for _si, _m in enumerate(live_rounds["S16"]):
-                with _s16_cols[_si % 2]:
-                    st.markdown(
-                        f'<div style="color:#ff8c3a;font-weight:700;font-size:0.8rem;margin-bottom:6px;text-transform:uppercase">'
-                        f'{_m.get("region", "")} Region</div>',
-                        unsafe_allow_html=True)
-                    _s1_h = _m.get("s1", 0); _s2_h = _m.get("s2", 0)
-                    st.markdown(f'<div style="color:#475569;font-size:0.72rem;margin-bottom:4px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
-                    _bkt_card(_m)
-
-        with br_e8:
-            _done_e8 = sum(1 for m in live_rounds["E8"] if m.get("completed"))
-            st.caption(f"Elite 8 · {_done_e8}/{len(live_rounds['E8'])} games complete")
-            _e8_cols = st.columns(2)
-            for _ei, _m in enumerate(live_rounds["E8"]):
-                with _e8_cols[_ei % 2]:
-                    st.markdown(
-                        f'<div style="color:#ff8c3a;font-weight:700;font-size:0.9rem;margin-bottom:6px;text-transform:uppercase">'
-                        f'🏆 {_m.get("region", "")} Region Championship</div>',
-                        unsafe_allow_html=True)
-                    _s1_h = _m.get("s1", 0); _s2_h = _m.get("s2", 0)
-                    st.markdown(f'<div style="color:#475569;font-size:0.72rem;margin-bottom:4px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
-                    _bkt_card(_m)
-
-        with br_ff:
-            _done_ff = sum(1 for m in live_rounds["FF"] if m.get("completed"))
-            st.caption(f"Final Four · {_done_ff}/{len(live_rounds['FF'])} games complete")
-            _ff_cols = st.columns(2)
-            for _fi, _m in enumerate(live_rounds["FF"]):
-                with _ff_cols[_fi]:
-                    st.markdown(
-                        f'<div style="color:#fbbf24;font-weight:800;font-size:1rem;margin-bottom:8px">🏅 Semifinal {_fi + 1}</div>',
-                        unsafe_allow_html=True)
-                    _s1_h = _m.get("s1", 0); _s2_h = _m.get("s2", 0)
-                    st.markdown(f'<div style="color:#475569;font-size:0.72rem;margin-bottom:4px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
-                    _bkt_card(_m)
-
-        with br_champ:
-            st.markdown('<div style="text-align:center;font-size:1.4rem;font-weight:900;color:#fbbf24;margin:16px 0">🏆 Championship Game</div>', unsafe_allow_html=True)
-            if live_rounds["Championship"]:
-                _cm = live_rounds["Championship"][0]
-                _ch_cols = st.columns([1, 2, 1])
-                with _ch_cols[1]:
-                    _s1_h = _cm.get("s1", 0); _s2_h = _cm.get("s2", 0)
-                    st.markdown(f'<div style="color:#475569;font-size:0.78rem;text-align:center;margin-bottom:6px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
-                    _bkt_card(_cm)
-                if _cm.get("completed"):
-                    _champ_w = _cm["winner"]
-                    _champ_s = _cm.get("s1", 0) if _champ_w == _cm["t1"] else _cm.get("s2", 0)
-                    st.markdown(
-                        f'<div style="text-align:center;background:linear-gradient(135deg,#1a2a1a,#0f2b0f);'
-                        f'border:2px solid #4ade80;border-radius:12px;padding:24px;margin-top:16px">'
-                        f'<div style="font-size:2.5rem">🏆</div>'
-                        f'<div style="color:#4ade80;font-weight:900;font-size:1.5rem;margin:8px 0">{_champ_w}</div>'
-                        f'<div style="color:#94a3b8">#{_champ_s} seed · 2026 National Champion</div>'
-                        f'</div>', unsafe_allow_html=True)
-                elif _cm["t1"] and _cm["t2"]:
-                    _proj_w = _cm.get("model_winner", _cm["winner"])
-                    _proj_s = _cm.get("s1", 0) if _proj_w == _cm["t1"] else _cm.get("s2", 0)
-                    _proj_p = _cm.get("winner_p", 0.5)
-                    st.markdown(
-                        f'<div style="text-align:center;background:linear-gradient(135deg,#1a1a2a,#0f0f2b);'
-                        f'border:2px solid #f97316;border-radius:12px;padding:24px;margin-top:16px">'
-                        f'<div style="font-size:2.5rem">🏆</div>'
-                        f'<div style="color:#f97316;font-weight:900;font-size:1.5rem;margin:8px 0">{_proj_w}</div>'
-                        f'<div style="color:#94a3b8">#{_proj_s} seed · Statlasberg\'s Projected Champion · {_proj_p*100:.0f}% conf</div>'
-                        f'</div>', unsafe_allow_html=True)
-            else:
-                st.info("Championship matchup will be determined as the tournament progresses.")
-
-
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# TAB 7 — LIVE GAMES  (ESPN public API, no key required)
-# ─────────────────────────────────────────────────────────────────────────────
 ESPN_SCOREBOARD = (
     "https://site.api.espn.com/apis/site/v2/sports/basketball/"
     "mens-college-basketball/scoreboard?groups=100&limit=50"
@@ -1800,278 +1601,6 @@ _NCAA_SCOREBOARD = (
 )
 
 
-@st.cache_data(ttl=25)
-def fetch_ncaa_live_games():
-    """Fetch live scores from NCAA.com official scoreboard — second source to
-    cross-check ESPN and catch any games ESPN's filter misses."""
-    if not _REQUESTS_OK:
-        return []
-    try:
-        from datetime import datetime
-        now = datetime.now()
-        url = _NCAA_SCOREBOARD.format(
-            year=now.year, month=f"{now.month:02d}", day=f"{now.day:02d}"
-        )
-        resp = _requests.get(url, timeout=6, headers={
-            "User-Agent": "statlasberg/1.0", "Accept": "application/json"
-        })
-        resp.raise_for_status()
-        data = resp.json()
-        games = []
-        for gw in data.get("games", []):
-            g = gw.get("game", {})
-            home = g.get("home", {}); away = g.get("away", {})
-            state_raw = g.get("gameState", "pre").lower()
-            state = "in" if state_raw in ("live", "in") else "post" if "final" in state_raw else "pre"
-            period_raw = g.get("currentPeriod", "")
-            period = 2 if any(x in period_raw for x in ("2H", "H2", "2nd")) else 1
-            try:
-                h_sc = int(home.get("score", 0) or 0)
-                a_sc = int(away.get("score", 0) or 0)
-            except Exception:
-                h_sc = a_sc = 0
-            games.append({
-                "event_id": "ncaa_" + str(g.get("gameID", "")),
-                "state": state, "period": period,
-                "clock": g.get("contestClock", ""),
-                "team1": {
-                    "name":   home.get("names", {}).get("full", home.get("names", {}).get("short", "")),
-                    "score":  h_sc,
-                    "record": home.get("record", ""),
-                },
-                "team2": {
-                    "name":   away.get("names", {}).get("full", away.get("names", {}).get("short", "")),
-                    "score":  a_sc,
-                    "record": away.get("record", ""),
-                },
-                "headline": g.get("network", ""),
-                "source": "NCAA",
-            })
-        return games
-    except Exception:
-        return []
-
-
-def _team_card_html(name, score_str, record, subtitle, border="#374151",
-                    score_color="#f1f5f9", badge=""):
-    """Shared team card block used across live, finished, and upcoming sections."""
-    return (
-        f'<div style="background:#131820;border:2px solid {border};'
-        f'border-radius:8px;padding:10px;margin-bottom:4px">'
-        f'<div style="font-size:1rem;font-weight:800;color:#f1f5f9">'
-        f'{name}{(" " + badge) if badge else ""}</div>'
-        f'<div style="font-size:2rem;font-weight:900;color:{score_color}">{score_str}</div>'
-        f'<div style="color:#94a3b8;font-size:0.75rem">{record}</div>'
-        f'<div style="color:#64748b;font-size:0.75rem;margin-top:3px">{subtitle}</div>'
-        f'</div>'
-    )
-
-
-def _prob_bar_html(p, color):
-    """Win probability fill bar."""
-    return (
-        f'<div style="background:#2d3748;border-radius:4px;height:7px;margin:5px 0">'
-        f'<div style="width:{int(p*100)}%;background:{color};height:7px;border-radius:4px"></div>'
-        f'</div>'
-        f'<div style="color:{color};font-weight:700;font-size:0.95rem">'
-        f'{p*100:.0f}% win prob</div>'
-    )
-
-
-def fetch_live_games():
-    """Pull current NCAA tournament games from ESPN's public scoreboard API.
-    Returns list of game dicts or empty list on failure."""
-    if not _REQUESTS_OK:
-        return []
-    try:
-        resp = _requests.get(ESPN_SCOREBOARD, timeout=6,
-                             headers={"User-Agent": "statlasberg/1.0"})
-        resp.raise_for_status()
-        data = resp.json()
-        games = []
-        for event in data.get("events", []):
-            comp = event.get("competitions", [{}])[0]
-            comps = comp.get("competitors", [])
-            if len(comps) < 2:
-                continue
-            # Identify home/away — NCAA tournament is neutral so both are "away"
-            t1 = comps[0]; t2 = comps[1]
-            status_obj = event.get("status", {})
-            status_type = status_obj.get("type", {})
-            state = status_type.get("state", "pre")      # pre / in / post
-            display_clock = status_obj.get("displayClock", "0:00")
-            period = status_obj.get("period", 0)
-            completed = status_type.get("completed", False)
-
-            def team_info(t):
-                score_str = t.get("score", "0")
-                try:
-                    score = int(score_str)
-                except Exception:
-                    score = 0
-                return {
-                    "name":    t.get("team", {}).get("displayName", "Unknown"),
-                    "abbr":    t.get("team", {}).get("abbreviation", "???"),
-                    "score":   score,
-                    "record":  t.get("records", [{}])[0].get("summary", ""),
-                }
-
-            g = {
-                "event_id":  event.get("id", ""),
-                "name":      event.get("name", ""),
-                "state":     state,
-                "completed": completed,
-                "period":    period,
-                "clock":     display_clock,
-                "team1":     team_info(t1),
-                "team2":     team_info(t2),
-                "headline":  comp.get("notes", [{}])[0].get("headline", ""),
-            }
-            games.append(g)
-        return games
-    except Exception:
-        return []
-
-
-@st.cache_data(ttl=3600)
-def fetch_game_box_score(event_id):
-    """Extract actual game stats from ESPN summary endpoint the moment a game ends.
-    Returns dict with per-team FG%, rebounds, turnovers, assists, half scores, etc.
-    Keys: t1_name, t1_fg_pct, t1_rebounds, t1_turnovers, t1_h1, t1_h2, ... (t2_ same)
-    All values are raw strings as ESPN returns them — caller converts to float as needed."""
-    if not _REQUESTS_OK or not event_id:
-        return {}
-    try:
-        url = ESPN_PLAYBYPLAY.format(event_id=event_id)
-        resp = _requests.get(url, timeout=8, headers={"User-Agent": "statlasberg/1.0"})
-        resp.raise_for_status()
-        data = resp.json()
-
-        boxscore = data.get("boxscore", {})
-        teams = boxscore.get("teams", [])
-        if len(teams) < 2:
-            return {}
-
-        result = {}
-        for i, td in enumerate(teams[:2]):
-            pfx = f"t{i+1}_"
-            result[f"{pfx}name"] = td.get("team", {}).get("displayName", "")
-            stats = {s.get("name", ""): s.get("displayValue", "")
-                     for s in td.get("statistics", [])}
-            for espn_key, out_key in [
-                ("fieldGoalPct",           "fg_pct"),
-                ("threePointFieldGoalPct", "fg3_pct"),
-                ("freeThrowPct",           "ft_pct"),
-                ("totalRebounds",          "rebounds"),
-                ("offensiveRebounds",      "off_reb"),
-                ("turnovers",              "turnovers"),
-                ("assists",                "assists"),
-                ("steals",                 "steals"),
-                ("blocks",                 "blocks"),
-                ("fieldGoalsMade-fieldGoalsAttempted", "fg_made_att"),
-            ]:
-                result[f"{pfx}{out_key}"] = stats.get(espn_key, "")
-
-        # Line scores (points per half/OT) from header competitions
-        header = data.get("header", {})
-        comps_list = header.get("competitions", [])
-        if comps_list:
-            competitors = comps_list[0].get("competitors", [])
-            for i, comp in enumerate(competitors[:2]):
-                pfx = f"t{i+1}_"
-                ls = comp.get("linescores", [])
-                result[f"{pfx}h1"] = ls[0].get("displayValue", "") if len(ls) > 0 else ""
-                result[f"{pfx}h2"] = ls[1].get("displayValue", "") if len(ls) > 1 else ""
-
-        return result
-    except Exception:
-        return {}
-
-
-def fetch_play_by_play(event_id):
-    """Return last N plays and current scoring run for a game."""
-    if not _REQUESTS_OK or not event_id:
-        return [], ""
-    try:
-        url = ESPN_PLAYBYPLAY.format(event_id=event_id)
-        resp = _requests.get(url, timeout=6,
-                             headers={"User-Agent": "statlasberg/1.0"})
-        resp.raise_for_status()
-        data = resp.json()
-        plays_raw = []
-        for period_data in data.get("plays", []):
-            # ESPN returns plays inside period arrays
-            if isinstance(period_data, dict):
-                plays_raw.append(period_data)
-        # Get last 10 plays
-        last_plays = plays_raw[-10:] if len(plays_raw) >= 10 else plays_raw
-        play_texts = [p.get("text", "") for p in reversed(last_plays) if p.get("text")]
-
-        # Detect scoring run: last 6 scoring plays
-        score_plays = [p for p in reversed(plays_raw) if p.get("scoringPlay", False)][:6]
-        run_team = ""
-        run_count = 0
-        if score_plays:
-            first_scorer = score_plays[0].get("team", {}).get("displayName", "")
-            run = 0
-            for sp in score_plays:
-                if sp.get("team", {}).get("displayName", "") == first_scorer:
-                    run += 1
-                else:
-                    break
-            if run >= 3:
-                run_team = first_scorer
-                run_count = run
-
-        momentum = f"🔥 {run_team} on a {run_count}-0 run!" if run_count >= 3 else ""
-        return play_texts, momentum
-    except Exception:
-        return [], ""
-
-
-def live_win_prob(pregame_p, score_diff, period, clock_str, total_periods=2):
-    """Blend model pre-game probability with in-game state.
-    score_diff = team1_score - team2_score (positive = team1 leading).
-    Returns (p_team1_wins, p_team2_wins).
-    """
-    # Parse clock to seconds remaining in current period
-    try:
-        parts = clock_str.split(":")
-        clock_secs = int(parts[0]) * 60 + int(parts[1]) if len(parts) == 2 else 0
-    except Exception:
-        clock_secs = 0
-
-    total_game_secs = total_periods * 20 * 60  # 2×20 min halves = 2400s
-    period_secs = 20 * 60  # 20 min per half
-    elapsed_secs = max(0, (period - 1) * period_secs + (period_secs - clock_secs))
-    game_pct = min(1.0, elapsed_secs / total_game_secs)  # 0=start, 1=end
-
-    # In-game win probability: score diff matters more as game ends
-    # Sensitivity: at end of game a 1-point lead is ~85% win; early it's ~52%
-    k = 3.0 + game_pct * 18.0   # scale factor grows from 3 (start) to 21 (end)
-    in_game_p = 1.0 / (1.0 + math.exp(-score_diff / k))
-
-    # Blend: pre-game model dominates early, in-game dominates late
-    blended = (1 - game_pct) * pregame_p + game_pct * in_game_p
-    return round(blended, 3), round(1 - blended, 3)
-
-
-def model_pregame_prob(team1_name, team2_name, bkt_df):
-    """Look up pre-game win probability from contender scores."""
-    def get_score(name):
-        rows = bkt_df[bkt_df["team"].str.lower() == name.lower()]
-        if len(rows) == 0:
-            # fuzzy: find closest team name
-            for _, r in bkt_df.iterrows():
-                if name.lower() in r["team"].lower() or r["team"].lower() in name.lower():
-                    return safe_f(r.get("contender_score", 55))
-        return safe_f(rows.iloc[0].get("contender_score", 55)) if len(rows) > 0 else 55.0
-    s1 = get_score(team1_name)
-    s2 = get_score(team2_name)
-    return win_prob_sigmoid(s1, s2), s1, s2
-
-
-# All 2026 NCAA tournament dates (First Four → Championship)
 _TOURNEY_DATES = [
     "20260319","20260320","20260321","20260322","20260323",
     "20260324","20260325","20260327","20260328","20260329",
@@ -2513,6 +2042,504 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
     return result_df
 
 
+
+with tab5:
+    st.markdown('<div class="section-header">🏆 2026 NCAA Tournament Bracket</div>', unsafe_allow_html=True)
+    st.caption("Model predictions · Live results update as games complete · Simulations adjust automatically")
+
+    BRACKET_PAIRS = [(1, 16), (8, 9), (5, 12), (4, 13), (6, 11), (3, 14), (7, 10), (2, 15)]
+
+    if "region" not in in_bracket.columns or len(in_bracket) == 0:
+        st.warning("Bracket data not loaded.")
+    else:
+        all_round_matchups = build_round_matchups(in_bracket)
+
+        # Fetch live ESPN results — same cache as Recap tab (3 min TTL)
+        _bkt_team_set = frozenset(in_bracket["team"].tolist())
+        _bkt_recap = load_or_update_results(_bkt_team_set, in_bracket, all_round_matchups)
+
+        # Adapt contender scores upward for teams that won as underdogs
+        _adapted_scores = _compute_adapted_scores(in_bracket, _bkt_recap)
+
+        live_rounds = build_bracket_live(in_bracket, _bkt_recap, _adapted_scores)
+
+        # ── Record header ────────────────────────────────────────────────────
+        if not _bkt_recap.empty and "correct" in _bkt_recap.columns:
+            _total_bkt = len(_bkt_recap)
+            _correct_bkt = int(_bkt_recap["correct"].sum())
+            _pct_bkt = _correct_bkt / _total_bkt * 100 if _total_bkt else 0
+            _streak_bkt = 0
+            for _cv in _bkt_recap.sort_values("date", ascending=False)["correct"].tolist():
+                if _cv:
+                    _streak_bkt += 1
+                else:
+                    break
+            _hc = st.columns(4)
+            _hc[0].metric("🤖 Statlasberg Record", f"{_correct_bkt}–{_total_bkt - _correct_bkt}", f"{_pct_bkt:.0f}%")
+            _hc[1].metric("🔥 Streak", f"W{_streak_bkt}" if _streak_bkt > 0 else "—")
+            _rnd_strs_bkt = []
+            for _rnd_bkt in ["R64", "R32", "S16", "E8", "FF"]:
+                _rdf_bkt = _bkt_recap[_bkt_recap["round"] == _rnd_bkt]
+                if len(_rdf_bkt):
+                    _rnd_strs_bkt.append(f"{_rnd_bkt} {int(_rdf_bkt['correct'].sum())}/{len(_rdf_bkt)}")
+            _hc[2].metric("📊 By Round", " · ".join(_rnd_strs_bkt) or "—")
+            _hc[3].metric("🎯 Confidence", "HIGH" if _pct_bkt > 75 else "MODERATE" if _pct_bkt > 60 else "CALIBRATING")
+            st.markdown("---")
+
+        # ── Helper: render one matchup card ─────────────────────────────────
+        def _bkt_card(m):
+            t1 = m.get("t1", ""); t2 = m.get("t2", "")
+            s1 = m.get("s1", 0);  s2 = m.get("s2", 0)
+            winner = m.get("winner", ""); loser = m.get("loser", "")
+            mw     = m.get("model_winner", winner)
+            wp     = m.get("winner_p", 0.5)
+            done   = m.get("completed", False)
+            ok     = m.get("model_correct")
+            if not t1 and not t2:
+                return
+
+            if done:
+                # ── completed game ────────────────────────────────────────
+                w_seed = s1 if winner == t1 else s2
+                l_seed = s2 if winner == t1 else s1
+                verdict = "Called it ✓" if ok else f"Missed — had {mw}"
+                v_color = "#4ade80" if ok else "#f87171"
+                border  = "#4ade80" if ok else "#ef4444"
+                st.markdown(
+                    f'<div style="background:#0f1a12;border:2px solid {border};border-radius:8px;padding:8px 12px;margin:3px 0">'
+                    f'<div style="color:#4ade80;font-weight:800;font-size:1rem">🏆 #{w_seed} {winner}</div>'
+                    f'<div style="color:#64748b;font-size:0.78rem;margin-top:2px">def. #{l_seed} {loser}</div>'
+                    f'<div style="color:{v_color};font-size:0.72rem;margin-top:4px">{verdict} · {wp*100:.0f}% conf</div>'
+                    f'</div>', unsafe_allow_html=True)
+            else:
+                # ── model projection ──────────────────────────────────────
+                t1_row = in_bracket[in_bracket["team"] == t1]
+                t2_row = in_bracket[in_bracket["team"] == t2]
+                c1 = safe_f(t1_row.iloc[0].get("contender_score", 50)) if len(t1_row) else 50
+                c2 = safe_f(t2_row.iloc[0].get("contender_score", 50)) if len(t2_row) else 50
+                p1 = win_prob_sigmoid(c1, c2); p2 = 1 - p1
+                fav   = t1 if p1 >= p2 else t2
+                fav_p = max(p1, p2)
+                dog   = t2 if p1 >= p2 else t1
+                dog_p = min(p1, p2)
+                fs    = s1 if fav == t1 else s2
+                ds    = s2 if fav == t1 else s1
+                fav_row = t1_row.iloc[0] if len(t1_row) and fav == t1 else (t2_row.iloc[0] if len(t2_row) else None)
+                hl = hot_label(fav_row) if fav_row is not None else ""
+                hl_span = f' <span style="color:#4ade80;font-size:0.65rem">{hl}</span>' if hl else ""
+                flags = []
+                for _tn, _tr in [(t1, t1_row), (t2, t2_row)]:
+                    if len(_tr):
+                        r = _tr.iloc[0]
+                        if r.get("fraud_favorite_flag"):      flags.append(f"⚠️ {_tn}")
+                        if r.get("cinderella_flag"):           flags.append(f"🪄 {_tn}")
+                        if r.get("dangerous_low_seed_flag"):   flags.append(f"💥 {_tn}")
+                flag_line = (f'<div style="color:#f59e0b;font-size:0.68rem;margin-top:3px">'
+                             f'{" · ".join(flags)}</div>') if flags else ""
+                st.markdown(
+                    f'<div style="background:#131820;border:2px solid #f97316;border-radius:8px;padding:8px 12px;margin:3px 0">'
+                    f'<div style="color:#f1f5f9;font-weight:800;font-size:0.95rem">#{fs} {fav}{hl_span}</div>'
+                    f'<div style="background:#1e293b;border-radius:3px;height:4px;margin:4px 0">'
+                    f'<div style="width:{int(fav_p*100)}%;background:#f97316;height:4px;border-radius:3px"></div></div>'
+                    f'<div style="color:#f97316;font-weight:700;font-size:0.85rem">{fav_p*100:.0f}% · {american_line(fav_p)}</div>'
+                    f'<div style="color:#94a3b8;font-size:0.78rem;margin-top:4px">vs #{ds} {dog} ({dog_p*100:.0f}%)</div>'
+                    f'{flag_line}'
+                    f'</div>', unsafe_allow_html=True)
+
+        # ── Round tabs ───────────────────────────────────────────────────────
+        br_r64, br_r32, br_s16, br_e8, br_ff, br_champ = st.tabs([
+            "R64", "R32", "Sweet 16", "Elite 8", "Final Four", "🏆 Championship"
+        ])
+
+        with br_r64:
+            _done_r64  = sum(1 for m in live_rounds["R64"] if m.get("completed"))
+            _total_r64 = len(live_rounds["R64"])
+            st.caption(f"Round of 64 · {_done_r64}/{_total_r64} games complete")
+            _r64_cols = st.columns(4)
+            for _ri, _region in enumerate(["East", "South", "West", "Midwest"]):
+                with _r64_cols[_ri]:
+                    _top1 = in_bracket[(in_bracket["region"] == _region) & (in_bracket["seed"] == 1)]
+                    _top1_name = _top1.iloc[0]["team"] if len(_top1) else "TBD"
+                    st.markdown(
+                        f'<div style="color:#ff8c3a;font-weight:800;font-size:0.85rem;border-bottom:2px solid #f97316;'
+                        f'padding-bottom:3px;margin-bottom:10px;text-transform:uppercase">{_region}<br/>'
+                        f'<span style="color:#94a3b8;font-size:0.75rem;font-weight:400">#1 {_top1_name}</span></div>',
+                        unsafe_allow_html=True)
+                    for _m in [m for m in live_rounds["R64"] if m.get("region") == _region]:
+                        _s1_h = _m.get("s1", 0); _s2_h = _m.get("s2", 0)
+                        st.markdown(f'<div style="color:#475569;font-size:0.68rem;margin-top:6px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
+                        _bkt_card(_m)
+
+        with br_r32:
+            _done_r32  = sum(1 for m in live_rounds["R32"] if m.get("completed"))
+            _total_r32 = len(live_rounds["R32"])
+            st.caption(f"Round of 32 · {_done_r32}/{_total_r32} games complete")
+            _r32_cols = st.columns(4)
+            for _ri2, _region in enumerate(["East", "South", "West", "Midwest"]):
+                with _r32_cols[_ri2]:
+                    st.markdown(
+                        f'<div style="color:#ff8c3a;font-weight:700;font-size:0.8rem;border-bottom:1px solid #f97316;'
+                        f'padding-bottom:2px;margin-bottom:8px;text-transform:uppercase">{_region}</div>',
+                        unsafe_allow_html=True)
+                    for _m in [m for m in live_rounds["R32"] if m.get("region") == _region]:
+                        _s1_h = _m.get("s1", 0); _s2_h = _m.get("s2", 0)
+                        st.markdown(f'<div style="color:#475569;font-size:0.68rem;margin-top:6px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
+                        _bkt_card(_m)
+
+        with br_s16:
+            _done_s16 = sum(1 for m in live_rounds["S16"] if m.get("completed"))
+            st.caption(f"Sweet 16 · {_done_s16}/{len(live_rounds['S16'])} games complete")
+            _s16_cols = st.columns(2)
+            for _si, _m in enumerate(live_rounds["S16"]):
+                with _s16_cols[_si % 2]:
+                    st.markdown(
+                        f'<div style="color:#ff8c3a;font-weight:700;font-size:0.8rem;margin-bottom:6px;text-transform:uppercase">'
+                        f'{_m.get("region", "")} Region</div>',
+                        unsafe_allow_html=True)
+                    _s1_h = _m.get("s1", 0); _s2_h = _m.get("s2", 0)
+                    st.markdown(f'<div style="color:#475569;font-size:0.72rem;margin-bottom:4px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
+                    _bkt_card(_m)
+
+        with br_e8:
+            _done_e8 = sum(1 for m in live_rounds["E8"] if m.get("completed"))
+            st.caption(f"Elite 8 · {_done_e8}/{len(live_rounds['E8'])} games complete")
+            _e8_cols = st.columns(2)
+            for _ei, _m in enumerate(live_rounds["E8"]):
+                with _e8_cols[_ei % 2]:
+                    st.markdown(
+                        f'<div style="color:#ff8c3a;font-weight:700;font-size:0.9rem;margin-bottom:6px;text-transform:uppercase">'
+                        f'🏆 {_m.get("region", "")} Region Championship</div>',
+                        unsafe_allow_html=True)
+                    _s1_h = _m.get("s1", 0); _s2_h = _m.get("s2", 0)
+                    st.markdown(f'<div style="color:#475569;font-size:0.72rem;margin-bottom:4px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
+                    _bkt_card(_m)
+
+        with br_ff:
+            _done_ff = sum(1 for m in live_rounds["FF"] if m.get("completed"))
+            st.caption(f"Final Four · {_done_ff}/{len(live_rounds['FF'])} games complete")
+            _ff_cols = st.columns(2)
+            for _fi, _m in enumerate(live_rounds["FF"]):
+                with _ff_cols[_fi]:
+                    st.markdown(
+                        f'<div style="color:#fbbf24;font-weight:800;font-size:1rem;margin-bottom:8px">🏅 Semifinal {_fi + 1}</div>',
+                        unsafe_allow_html=True)
+                    _s1_h = _m.get("s1", 0); _s2_h = _m.get("s2", 0)
+                    st.markdown(f'<div style="color:#475569;font-size:0.72rem;margin-bottom:4px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
+                    _bkt_card(_m)
+
+        with br_champ:
+            st.markdown('<div style="text-align:center;font-size:1.4rem;font-weight:900;color:#fbbf24;margin:16px 0">🏆 Championship Game</div>', unsafe_allow_html=True)
+            if live_rounds["Championship"]:
+                _cm = live_rounds["Championship"][0]
+                _ch_cols = st.columns([1, 2, 1])
+                with _ch_cols[1]:
+                    _s1_h = _cm.get("s1", 0); _s2_h = _cm.get("s2", 0)
+                    st.markdown(f'<div style="color:#475569;font-size:0.78rem;text-align:center;margin-bottom:6px">#{_s1_h} vs #{_s2_h}</div>', unsafe_allow_html=True)
+                    _bkt_card(_cm)
+                if _cm.get("completed"):
+                    _champ_w = _cm["winner"]
+                    _champ_s = _cm.get("s1", 0) if _champ_w == _cm["t1"] else _cm.get("s2", 0)
+                    st.markdown(
+                        f'<div style="text-align:center;background:linear-gradient(135deg,#1a2a1a,#0f2b0f);'
+                        f'border:2px solid #4ade80;border-radius:12px;padding:24px;margin-top:16px">'
+                        f'<div style="font-size:2.5rem">🏆</div>'
+                        f'<div style="color:#4ade80;font-weight:900;font-size:1.5rem;margin:8px 0">{_champ_w}</div>'
+                        f'<div style="color:#94a3b8">#{_champ_s} seed · 2026 National Champion</div>'
+                        f'</div>', unsafe_allow_html=True)
+                elif _cm["t1"] and _cm["t2"]:
+                    _proj_w = _cm.get("model_winner", _cm["winner"])
+                    _proj_s = _cm.get("s1", 0) if _proj_w == _cm["t1"] else _cm.get("s2", 0)
+                    _proj_p = _cm.get("winner_p", 0.5)
+                    st.markdown(
+                        f'<div style="text-align:center;background:linear-gradient(135deg,#1a1a2a,#0f0f2b);'
+                        f'border:2px solid #f97316;border-radius:12px;padding:24px;margin-top:16px">'
+                        f'<div style="font-size:2.5rem">🏆</div>'
+                        f'<div style="color:#f97316;font-weight:900;font-size:1.5rem;margin:8px 0">{_proj_w}</div>'
+                        f'<div style="color:#94a3b8">#{_proj_s} seed · Statlasberg\'s Projected Champion · {_proj_p*100:.0f}% conf</div>'
+                        f'</div>', unsafe_allow_html=True)
+            else:
+                st.info("Championship matchup will be determined as the tournament progresses.")
+
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAB 7 — LIVE GAMES  (ESPN public API, no key required)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@st.cache_data(ttl=25)
+def fetch_ncaa_live_games():
+    """Fetch live scores from NCAA.com official scoreboard — second source to
+    cross-check ESPN and catch any games ESPN's filter misses."""
+    if not _REQUESTS_OK:
+        return []
+    try:
+        from datetime import datetime
+        now = datetime.now()
+        url = _NCAA_SCOREBOARD.format(
+            year=now.year, month=f"{now.month:02d}", day=f"{now.day:02d}"
+        )
+        resp = _requests.get(url, timeout=6, headers={
+            "User-Agent": "statlasberg/1.0", "Accept": "application/json"
+        })
+        resp.raise_for_status()
+        data = resp.json()
+        games = []
+        for gw in data.get("games", []):
+            g = gw.get("game", {})
+            home = g.get("home", {}); away = g.get("away", {})
+            state_raw = g.get("gameState", "pre").lower()
+            state = "in" if state_raw in ("live", "in") else "post" if "final" in state_raw else "pre"
+            period_raw = g.get("currentPeriod", "")
+            period = 2 if any(x in period_raw for x in ("2H", "H2", "2nd")) else 1
+            try:
+                h_sc = int(home.get("score", 0) or 0)
+                a_sc = int(away.get("score", 0) or 0)
+            except Exception:
+                h_sc = a_sc = 0
+            games.append({
+                "event_id": "ncaa_" + str(g.get("gameID", "")),
+                "state": state, "period": period,
+                "clock": g.get("contestClock", ""),
+                "team1": {
+                    "name":   home.get("names", {}).get("full", home.get("names", {}).get("short", "")),
+                    "score":  h_sc,
+                    "record": home.get("record", ""),
+                },
+                "team2": {
+                    "name":   away.get("names", {}).get("full", away.get("names", {}).get("short", "")),
+                    "score":  a_sc,
+                    "record": away.get("record", ""),
+                },
+                "headline": g.get("network", ""),
+                "source": "NCAA",
+            })
+        return games
+    except Exception:
+        return []
+
+
+def _team_card_html(name, score_str, record, subtitle, border="#374151",
+                    score_color="#f1f5f9", badge=""):
+    """Shared team card block used across live, finished, and upcoming sections."""
+    return (
+        f'<div style="background:#131820;border:2px solid {border};'
+        f'border-radius:8px;padding:10px;margin-bottom:4px">'
+        f'<div style="font-size:1rem;font-weight:800;color:#f1f5f9">'
+        f'{name}{(" " + badge) if badge else ""}</div>'
+        f'<div style="font-size:2rem;font-weight:900;color:{score_color}">{score_str}</div>'
+        f'<div style="color:#94a3b8;font-size:0.75rem">{record}</div>'
+        f'<div style="color:#64748b;font-size:0.75rem;margin-top:3px">{subtitle}</div>'
+        f'</div>'
+    )
+
+
+def _prob_bar_html(p, color):
+    """Win probability fill bar."""
+    return (
+        f'<div style="background:#2d3748;border-radius:4px;height:7px;margin:5px 0">'
+        f'<div style="width:{int(p*100)}%;background:{color};height:7px;border-radius:4px"></div>'
+        f'</div>'
+        f'<div style="color:{color};font-weight:700;font-size:0.95rem">'
+        f'{p*100:.0f}% win prob</div>'
+    )
+
+
+def fetch_live_games():
+    """Pull current NCAA tournament games from ESPN's public scoreboard API.
+    Returns list of game dicts or empty list on failure."""
+    if not _REQUESTS_OK:
+        return []
+    try:
+        resp = _requests.get(ESPN_SCOREBOARD, timeout=6,
+                             headers={"User-Agent": "statlasberg/1.0"})
+        resp.raise_for_status()
+        data = resp.json()
+        games = []
+        for event in data.get("events", []):
+            comp = event.get("competitions", [{}])[0]
+            comps = comp.get("competitors", [])
+            if len(comps) < 2:
+                continue
+            # Identify home/away — NCAA tournament is neutral so both are "away"
+            t1 = comps[0]; t2 = comps[1]
+            status_obj = event.get("status", {})
+            status_type = status_obj.get("type", {})
+            state = status_type.get("state", "pre")      # pre / in / post
+            display_clock = status_obj.get("displayClock", "0:00")
+            period = status_obj.get("period", 0)
+            completed = status_type.get("completed", False)
+
+            def team_info(t):
+                score_str = t.get("score", "0")
+                try:
+                    score = int(score_str)
+                except Exception:
+                    score = 0
+                return {
+                    "name":    t.get("team", {}).get("displayName", "Unknown"),
+                    "abbr":    t.get("team", {}).get("abbreviation", "???"),
+                    "score":   score,
+                    "record":  t.get("records", [{}])[0].get("summary", ""),
+                }
+
+            g = {
+                "event_id":  event.get("id", ""),
+                "name":      event.get("name", ""),
+                "state":     state,
+                "completed": completed,
+                "period":    period,
+                "clock":     display_clock,
+                "team1":     team_info(t1),
+                "team2":     team_info(t2),
+                "headline":  comp.get("notes", [{}])[0].get("headline", ""),
+            }
+            games.append(g)
+        return games
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=3600)
+def fetch_game_box_score(event_id):
+    """Extract actual game stats from ESPN summary endpoint the moment a game ends.
+    Returns dict with per-team FG%, rebounds, turnovers, assists, half scores, etc.
+    Keys: t1_name, t1_fg_pct, t1_rebounds, t1_turnovers, t1_h1, t1_h2, ... (t2_ same)
+    All values are raw strings as ESPN returns them — caller converts to float as needed."""
+    if not _REQUESTS_OK or not event_id:
+        return {}
+    try:
+        url = ESPN_PLAYBYPLAY.format(event_id=event_id)
+        resp = _requests.get(url, timeout=8, headers={"User-Agent": "statlasberg/1.0"})
+        resp.raise_for_status()
+        data = resp.json()
+
+        boxscore = data.get("boxscore", {})
+        teams = boxscore.get("teams", [])
+        if len(teams) < 2:
+            return {}
+
+        result = {}
+        for i, td in enumerate(teams[:2]):
+            pfx = f"t{i+1}_"
+            result[f"{pfx}name"] = td.get("team", {}).get("displayName", "")
+            stats = {s.get("name", ""): s.get("displayValue", "")
+                     for s in td.get("statistics", [])}
+            for espn_key, out_key in [
+                ("fieldGoalPct",           "fg_pct"),
+                ("threePointFieldGoalPct", "fg3_pct"),
+                ("freeThrowPct",           "ft_pct"),
+                ("totalRebounds",          "rebounds"),
+                ("offensiveRebounds",      "off_reb"),
+                ("turnovers",              "turnovers"),
+                ("assists",                "assists"),
+                ("steals",                 "steals"),
+                ("blocks",                 "blocks"),
+                ("fieldGoalsMade-fieldGoalsAttempted", "fg_made_att"),
+            ]:
+                result[f"{pfx}{out_key}"] = stats.get(espn_key, "")
+
+        # Line scores (points per half/OT) from header competitions
+        header = data.get("header", {})
+        comps_list = header.get("competitions", [])
+        if comps_list:
+            competitors = comps_list[0].get("competitors", [])
+            for i, comp in enumerate(competitors[:2]):
+                pfx = f"t{i+1}_"
+                ls = comp.get("linescores", [])
+                result[f"{pfx}h1"] = ls[0].get("displayValue", "") if len(ls) > 0 else ""
+                result[f"{pfx}h2"] = ls[1].get("displayValue", "") if len(ls) > 1 else ""
+
+        return result
+    except Exception:
+        return {}
+
+
+def fetch_play_by_play(event_id):
+    """Return last N plays and current scoring run for a game."""
+    if not _REQUESTS_OK or not event_id:
+        return [], ""
+    try:
+        url = ESPN_PLAYBYPLAY.format(event_id=event_id)
+        resp = _requests.get(url, timeout=6,
+                             headers={"User-Agent": "statlasberg/1.0"})
+        resp.raise_for_status()
+        data = resp.json()
+        plays_raw = []
+        for period_data in data.get("plays", []):
+            # ESPN returns plays inside period arrays
+            if isinstance(period_data, dict):
+                plays_raw.append(period_data)
+        # Get last 10 plays
+        last_plays = plays_raw[-10:] if len(plays_raw) >= 10 else plays_raw
+        play_texts = [p.get("text", "") for p in reversed(last_plays) if p.get("text")]
+
+        # Detect scoring run: last 6 scoring plays
+        score_plays = [p for p in reversed(plays_raw) if p.get("scoringPlay", False)][:6]
+        run_team = ""
+        run_count = 0
+        if score_plays:
+            first_scorer = score_plays[0].get("team", {}).get("displayName", "")
+            run = 0
+            for sp in score_plays:
+                if sp.get("team", {}).get("displayName", "") == first_scorer:
+                    run += 1
+                else:
+                    break
+            if run >= 3:
+                run_team = first_scorer
+                run_count = run
+
+        momentum = f"🔥 {run_team} on a {run_count}-0 run!" if run_count >= 3 else ""
+        return play_texts, momentum
+    except Exception:
+        return [], ""
+
+
+def live_win_prob(pregame_p, score_diff, period, clock_str, total_periods=2):
+    """Blend model pre-game probability with in-game state.
+    score_diff = team1_score - team2_score (positive = team1 leading).
+    Returns (p_team1_wins, p_team2_wins).
+    """
+    # Parse clock to seconds remaining in current period
+    try:
+        parts = clock_str.split(":")
+        clock_secs = int(parts[0]) * 60 + int(parts[1]) if len(parts) == 2 else 0
+    except Exception:
+        clock_secs = 0
+
+    total_game_secs = total_periods * 20 * 60  # 2×20 min halves = 2400s
+    period_secs = 20 * 60  # 20 min per half
+    elapsed_secs = max(0, (period - 1) * period_secs + (period_secs - clock_secs))
+    game_pct = min(1.0, elapsed_secs / total_game_secs)  # 0=start, 1=end
+
+    # In-game win probability: score diff matters more as game ends
+    # Sensitivity: at end of game a 1-point lead is ~85% win; early it's ~52%
+    k = 3.0 + game_pct * 18.0   # scale factor grows from 3 (start) to 21 (end)
+    in_game_p = 1.0 / (1.0 + math.exp(-score_diff / k))
+
+    # Blend: pre-game model dominates early, in-game dominates late
+    blended = (1 - game_pct) * pregame_p + game_pct * in_game_p
+    return round(blended, 3), round(1 - blended, 3)
+
+
+def model_pregame_prob(team1_name, team2_name, bkt_df):
+    """Look up pre-game win probability from contender scores."""
+    def get_score(name):
+        rows = bkt_df[bkt_df["team"].str.lower() == name.lower()]
+        if len(rows) == 0:
+            # fuzzy: find closest team name
+            for _, r in bkt_df.iterrows():
+                if name.lower() in r["team"].lower() or r["team"].lower() in name.lower():
+                    return safe_f(r.get("contender_score", 55))
+        return safe_f(rows.iloc[0].get("contender_score", 55)) if len(rows) > 0 else 55.0
+    s1 = get_score(team1_name)
+    s2 = get_score(team2_name)
+    return win_prob_sigmoid(s1, s2), s1, s2
+
+
+# All 2026 NCAA tournament dates (First Four → Championship)
 with tab6:
     st.markdown('<div class="section-header">📺 Live — NCAA Tournament</div>', unsafe_allow_html=True)
 
