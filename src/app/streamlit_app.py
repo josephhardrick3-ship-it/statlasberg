@@ -757,6 +757,24 @@ _BRACKET_NORM = {
     "Queens Royals": "Queens",
     "California Baptist Lancers": "California Baptist",
     "Prairie View A&M Panthers": "Prairie View A&M",
+    # Explicit mappings to prevent fuzzy-match false positives
+    # ("South Florida Bulls" would otherwise match "Florida" via substring)
+    "South Florida Bulls": "South Florida",
+    "Central Florida Knights": "Central Florida",
+    "Florida State Seminoles": "Florida State",
+    "Florida Atlantic Owls": "Florida Atlantic",
+    "Western Kentucky Hilltoppers": "Western Kentucky",
+    "Miami (OH) RedHawks": "Miami OH",
+    "Northern Iowa Panthers": "Northern Iowa",
+    "UCF Knights": "UCF",
+}
+
+# Seed → estimated contender score for teams NOT in bracket_analysis_2026.csv.
+# Calibrated to the score distribution of teams that ARE in the bracket.
+_SEED_SCORE_FALLBACK = {
+    1: 79, 2: 74, 3: 71, 4: 68, 5: 65,
+    6: 63, 7: 61, 8: 58, 9: 56, 10: 54,
+    11: 52, 12: 49, 13: 46, 14: 43, 15: 38, 16: 30,
 }
 
 @st.cache_data(ttl=60)  # re-read files every 60 s so pipeline updates show immediately
@@ -1654,6 +1672,9 @@ def fetch_all_tournament_games(bracket_teams):
                     t2_score = int(t2c.get("score", 0))
                 except Exception:
                     t1_score = t2_score = 0
+                # Extract seed from ESPN curatedRank (used as fallback for teams not in bracket)
+                t1_espn_seed = t1c.get("curatedRank", {}).get("current", 0) or 0
+                t2_espn_seed = t2c.get("curatedRank", {}).get("current", 0) or 0
                 winner = t1_name if t1_score >= t2_score else t2_name
                 loser  = t2_name if t1_score >= t2_score else t1_name
                 headline = comp.get("notes", [{}])[0].get("headline", "")
@@ -1663,6 +1684,7 @@ def fetch_all_tournament_games(bracket_teams):
                     "t1": t1_name, "t2": t2_name,
                     "winner": winner, "loser": loser,
                     "t1_score": t1_score, "t2_score": t2_score,
+                    "t1_espn_seed": t1_espn_seed, "t2_espn_seed": t2_espn_seed,
                     "headline": headline,
                     **box,  # attach all box score fields (fg_pct, rebounds, etc.)
                 }
@@ -1971,23 +1993,34 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
         headline = g.get("headline", "").lower()
         headline_round = _round_from_headline(headline)
 
+        # Seed-aware score lookup: if team isn't in bracket, fall back to seed-based estimate
+        def _score_with_seed_fallback(team, espn_seed):
+            if team in score_lkp:
+                return score_lkp[team]
+            return _SEED_SCORE_FALLBACK.get(int(espn_seed or 0), 50)
+
         model_tuple = model_pick_lkp.get((t1, t2)) or model_pick_lkp.get((t2, t1))
         if headline_round == "FF4":
             # First Four always wins — never let bracket lookup label it R64
-            s1 = score_lkp.get(t1, 50); s2 = score_lkp.get(t2, 50)
+            s1 = _score_with_seed_fallback(t1, g.get("t1_espn_seed", 0))
+            s2 = _score_with_seed_fallback(t2, g.get("t2_espn_seed", 0))
             model_winner = t1 if win_prob_sigmoid(s1, s2) >= 0.5 else t2
             model_loser  = t2 if model_winner == t1 else t1
             rnd = "FF4"; region = ""
         elif model_tuple:
             model_winner, model_loser, rnd, region = model_tuple
         else:
-            s1 = score_lkp.get(t1, 50); s2 = score_lkp.get(t2, 50)
+            s1 = _score_with_seed_fallback(t1, g.get("t1_espn_seed", 0))
+            s2 = _score_with_seed_fallback(t2, g.get("t2_espn_seed", 0))
             model_winner = t1 if win_prob_sigmoid(s1, s2) >= 0.5 else t2
             model_loser  = t2 if model_winner == t1 else t1
             rnd = headline_round or "R64"
             region = ""
         correct    = (winner == model_winner)
-        model_conf = win_prob_sigmoid(score_lkp.get(model_winner, 50), score_lkp.get(model_loser, 50))
+        # Use seed fallback for confidence too
+        mw_score = _score_with_seed_fallback(model_winner, g.get("t1_espn_seed" if model_winner == t1 else "t2_espn_seed", 0))
+        ml_score = _score_with_seed_fallback(model_loser,  g.get("t2_espn_seed" if model_winner == t1 else "t1_espn_seed", 0))
+        model_conf = win_prob_sigmoid(mw_score, ml_score)
         w_seed = seed_lkp.get(winner, 0); l_seed = seed_lkp.get(loser, 0)
         upset  = (w_seed > l_seed + 3) if w_seed and l_seed else False
         # Box score columns — stored directly from ESPN (already attached to g by fetch_all)
