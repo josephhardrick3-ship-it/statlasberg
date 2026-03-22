@@ -394,6 +394,81 @@ def run_monte_carlo_sim(r32_pairs_frozen, score_lkp_frozen, n=500_000):
     return {team_set[i]: float(s16_counts[i]) / n for i in range(n_teams)}
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def run_full_bracket_monte_carlo(r32_frozen, score_lkp_frozen, n=500_000):
+    """Vectorized full-bracket Monte Carlo: R32 through Championship.
+
+    r32_frozen: tuple of 16 (t1, t2, completed, actual_winner) tuples
+      Ordered: East×4, South×4, West×4, Midwest×4.
+      Adjacent pairs form S16 matchups within each region.
+    score_lkp_frozen: tuple of (team, adapted_score) pairs
+    Returns dict: team → championship_pct (0–100)
+    """
+    r32_info = list(r32_frozen)
+    slkp     = dict(score_lkp_frozen)
+
+    # Build flat team list and index map
+    team_set = []
+    for t1, t2, _, _ in r32_info:
+        if t1 and t1 not in team_set: team_set.append(t1)
+        if t2 and t2 not in team_set: team_set.append(t2)
+    n_teams = len(team_set)
+    if n_teams == 0:
+        return {}
+    tidx    = {t: i for i, t in enumerate(team_set)}
+    scores  = np.array([slkp.get(t, 50.0) for t in team_set])
+
+    # Win-probability matrix: prob_mat[i,j] = P(team_i beats team_j)
+    diff     = scores[:, None] - scores[None, :]
+    prob_mat = 1.0 / (1.0 + np.exp(-diff / 8.0))
+
+    # Convert R32 matchups to index arrays
+    r32_t1 = np.array([tidx[t1] for t1, t2, _, _ in r32_info])  # (16,)
+    r32_t2 = np.array([tidx[t2] for t1, t2, _, _ in r32_info])  # (16,)
+
+    # ── R32 (16 games) ─────────────────────────────────────────────────────
+    r32_p   = prob_mat[r32_t1, r32_t2]                           # (16,)
+    r32_rng = np.random.random((n, 16))
+    r32_win = np.where(r32_rng < r32_p, r32_t1, r32_t2)         # (n, 16)
+
+    # Lock completed games — override random result with actual winner
+    for i, (t1, t2, done, aw) in enumerate(r32_info):
+        if done and aw and aw in tidx:
+            r32_win[:, i] = tidx[aw]
+
+    # ── S16 (8 games): adjacent R32 winner pairs ──────────────────────────
+    s16_t1  = r32_win[:, 0::2]                                   # (n, 8)
+    s16_t2  = r32_win[:, 1::2]                                   # (n, 8)
+    s16_p   = prob_mat[s16_t1, s16_t2]
+    s16_rng = np.random.random((n, 8))
+    s16_win = np.where(s16_rng < s16_p, s16_t1, s16_t2)         # (n, 8)
+
+    # ── E8 (4 games): adjacent S16 winner pairs per region ────────────────
+    e8_t1   = s16_win[:, 0::2]                                   # (n, 4)
+    e8_t2   = s16_win[:, 1::2]                                   # (n, 4)
+    e8_p    = prob_mat[e8_t1, e8_t2]
+    e8_rng  = np.random.random((n, 4))
+    e8_win  = np.where(e8_rng < e8_p, e8_t1, e8_t2)             # (n, 4)
+
+    # ── FF (2 games): East(0) vs Midwest(3), South(1) vs West(2) ──────────
+    ff_t1   = e8_win[:, [0, 1]]                                  # (n, 2)
+    ff_t2   = e8_win[:, [3, 2]]                                  # (n, 2)
+    ff_p    = prob_mat[ff_t1, ff_t2]
+    ff_rng  = np.random.random((n, 2))
+    ff_win  = np.where(ff_rng < ff_p, ff_t1, ff_t2)             # (n, 2)
+
+    # ── Championship (1 game) ─────────────────────────────────────────────
+    ch_t1   = ff_win[:, 0]                                       # (n,)
+    ch_t2   = ff_win[:, 1]                                       # (n,)
+    ch_p    = prob_mat[ch_t1, ch_t2]
+    ch_rng  = np.random.random(n)
+    champs  = np.where(ch_rng < ch_p, ch_t1, ch_t2)             # (n,)
+
+    # Count championships per team
+    champ_counts = np.bincount(champs, minlength=n_teams)
+    return {team_set[i]: float(champ_counts[i]) / n * 100 for i in range(n_teams)}
+
+
 def _tossup_edge(t1_name, t2_name, bkt_df):
     """Return tossup-based score adjustment for close matchups.
 
@@ -969,6 +1044,8 @@ else:
 # ── Update championship odds based on actual results ────────────────────────
 # Teams that have been eliminated get 0% championship probability.
 # Remaining teams' probabilities are renormalized.
+# Preserve original pre-tournament odds for comparison before zeroing eliminated teams.
+champs_original = champs.copy() if len(champs) > 0 else pd.DataFrame()
 _actual_results_csv = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "data", "outputs", "game_results_2026.csv"
@@ -2002,12 +2079,155 @@ with tab3:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# TAB 4 — MODEL vs COMMITTEE
+# BRACKET DATA FOR CHAMPIONSHIP ODDS TAB
+# Load recap from CSV (no ESPN fetch needed here — tab5 handles that)
+# ─────────────────────────────────────────────────────────────────────────────
+_tab4_recap = pd.DataFrame()
+_tab4_adapted = {}
+_tab4_live_rounds = {}
+if len(in_bracket) > 0 and "region" in in_bracket.columns:
+    try:
+        if os.path.exists(_RESULTS_CSV):
+            _tab4_recap = pd.read_csv(_RESULTS_CSV)
+    except Exception:
+        pass
+    _tab4_adapted = _compute_adapted_scores(in_bracket, _tab4_recap)
+    _tab4_live_rounds = build_bracket_live(in_bracket, _tab4_recap, _tab4_adapted)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # TAB 4 — CHAMPIONSHIP ODDS
 # ─────────────────────────────────────────────────────────────────────────────
 with tab4:
-    st.markdown('<div class="section-header">Championship Probabilities — 500,000 Bracket Simulations</div>', unsafe_allow_html=True)
+    # ── Live Updated Odds — Full Bracket Resimulation ──────────────────────
+    _live_champ_probs = {}
+    _r32_games_completed = 0
+    _r32_games_total = 0
+    if _tab4_live_rounds and "R32" in _tab4_live_rounds and len(_tab4_live_rounds["R32"]) > 0:
+        _r32_list = _tab4_live_rounds["R32"]
+        _r32_games_total = len(_r32_list)
+        _r32_tuples = []
+        for m in _r32_list:
+            t1 = m.get("t1", "")
+            t2 = m.get("t2", "")
+            done = m.get("completed", False)
+            aw = m.get("winner", "") if done else ""
+            _r32_tuples.append((t1, t2, done, aw))
+            if done:
+                _r32_games_completed += 1
+        _r32_frozen = tuple(_r32_tuples)
+        _score_frozen = tuple(sorted(_tab4_adapted.items()))
+        if _tab4_adapted and len(_r32_tuples) == 16:
+            _live_champ_probs = run_full_bracket_monte_carlo(_r32_frozen, _score_frozen, n=500_000)
+
+    # Build original odds lookup from pre-tournament simulation
+    _orig_odds_lkp = {}
+    if len(champs_original) > 0 and "championship_pct" in champs_original.columns:
+        for _, _r in champs_original.iterrows():
+            _orig_odds_lkp[_r["team"]] = float(_r.get("championship_pct", 0))
+
+    # ── DISPLAY: Live Updated Odds (shown first if available) ────────────
+    if _live_champ_probs and any(v > 0 for v in _live_champ_probs.values()):
+        _total_games = len(_tab4_recap) if not isinstance(_tab4_recap, type(None)) and hasattr(_tab4_recap, '__len__') else 0
+        st.markdown(f'<div class="section-header">🔄 Live Updated Championship Odds — 500,000 Simulations</div>', unsafe_allow_html=True)
+        st.caption(f"Re-simulated with adapted scores from {_total_games} completed games · {_r32_games_completed}/{_r32_games_total} R32 games locked")
+
+        # Build display DataFrame
+        _live_rows = []
+        for team, pct in sorted(_live_champ_probs.items(), key=lambda x: x[1], reverse=True):
+            if pct > 0.05:
+                _live_rows.append({"team": team, "championship_pct": pct})
+        _live_disp = pd.DataFrame(_live_rows)
+        if len(bracket) > 0:
+            _live_disp = _live_disp.merge(bracket[["team", "region", "seed"]], on="team", how="left")
+        _live_disp = _live_disp.head(20)
+
+        # Top 3 podium
+        _lp1, _lp2, _lp3 = st.columns(3)
+        for i, (_, r) in enumerate(_live_disp.head(3).iterrows()):
+            seed_disp = f"#{int(r['seed'])} seed · {r['region']}" if pd.notna(r.get('seed')) else ""
+            orig_pct = _orig_odds_lkp.get(r["team"], 0)
+            delta = r["championship_pct"] - orig_pct
+            if abs(delta) >= 0.1:
+                delta_str = f'<span style="color:{("#4ade80" if delta > 0 else "#f87171")};font-size:0.85rem">{"↑" if delta > 0 else "↓"} {abs(delta):+.1f}%</span>'
+            else:
+                delta_str = '<span style="color:#6b7280;font-size:0.85rem">—</span>'
+            border_col = '#f59e0b' if i == 0 else '#94a3b8' if i == 1 else '#cd7f32'
+            with [_lp1, _lp2, _lp3][i]:
+                st.markdown(f"""
+                <div class="team-card" style="text-align:center;border-color:{border_col};border-width:2px">
+                    <div style="font-size:2rem">{"🥇🥈🥉"[i]}</div>
+                    <div class="team-name" style="font-size:1.3rem">{r['team']}</div>
+                    <div style="color:#f97316;font-size:1.7rem;font-weight:800">{r['championship_pct']:.1f}%</div>
+                    <div style="color:#94a3b8;font-size:0.8rem">{seed_disp}</div>
+                    <div>{delta_str}</div>
+                    <div style="color:#b0bbd0;font-size:0.78rem">Model line: {american_line(r['championship_pct']/100)}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        # Odds movement table
+        st.markdown("---")
+        st.markdown('<div class="section-header">📈 Odds Movement — Pre-Tournament vs Live</div>', unsafe_allow_html=True)
+        _move_rows = []
+        for _, r in _live_disp.iterrows():
+            team = r["team"]
+            updated_pct = r["championship_pct"]
+            orig_pct = _orig_odds_lkp.get(team, 0)
+            delta = updated_pct - orig_pct
+            seed_v = int(r["seed"]) if pd.notna(r.get("seed")) else ""
+            if abs(delta) >= 0.1:
+                if delta > 0:
+                    delta_html = f'<span style="color:#4ade80;font-weight:{"800" if abs(delta)>2 else "600"}">↑ +{delta:.1f}%</span>'
+                else:
+                    delta_html = f'<span style="color:#f87171;font-weight:{"800" if abs(delta)>2 else "600"}">↓ {delta:.1f}%</span>'
+            else:
+                delta_html = '<span style="color:#6b7280">—</span>'
+            bold = "font-weight:800;" if abs(delta) > 2 else ""
+            _move_rows.append(f"""<tr style="{bold}">
+                <td style="padding:6px 12px;border-bottom:1px solid #374151">{team}</td>
+                <td style="padding:6px 12px;border-bottom:1px solid #374151;text-align:center">{seed_v}</td>
+                <td style="padding:6px 12px;border-bottom:1px solid #374151;text-align:center;color:#94a3b8">{orig_pct:.1f}%</td>
+                <td style="padding:6px 12px;border-bottom:1px solid #374151;text-align:center;color:#f97316">{updated_pct:.1f}%</td>
+                <td style="padding:6px 12px;border-bottom:1px solid #374151;text-align:center">{delta_html}</td>
+            </tr>""")
+        st.markdown(f"""
+        <table style="width:100%;border-collapse:collapse;background:#1a1f2e;border-radius:8px;overflow:hidden">
+            <thead>
+                <tr style="background:#0f1318">
+                    <th style="padding:8px 12px;text-align:left;color:#f1f5f9;border-bottom:2px solid #374151">Team</th>
+                    <th style="padding:8px 12px;text-align:center;color:#f1f5f9;border-bottom:2px solid #374151">Seed</th>
+                    <th style="padding:8px 12px;text-align:center;color:#94a3b8;border-bottom:2px solid #374151">Original %</th>
+                    <th style="padding:8px 12px;text-align:center;color:#f97316;border-bottom:2px solid #374151">Updated %</th>
+                    <th style="padding:8px 12px;text-align:center;color:#f1f5f9;border-bottom:2px solid #374151">Change</th>
+                </tr>
+            </thead>
+            <tbody>
+                {"".join(_move_rows)}
+            </tbody>
+        </table>
+        """, unsafe_allow_html=True)
+
+        # Updated bar chart
+        st.markdown("---")
+        fig_live, ax_live = plt.subplots(figsize=(12, 5))
+        fig_live.patch.set_facecolor("#0e1117"); ax_live.set_facecolor("#1a1f2e")
+        teams_l = _live_disp["team"].tolist()
+        probs_l = _live_disp["championship_pct"].tolist()
+        colors_l = ["#f97316" if i == 0 else "#3b82f6" if i < 4 else "#4b5563" for i in range(len(teams_l))]
+        bars_l = ax_live.barh(teams_l[::-1], probs_l[::-1], color=colors_l[::-1], edgecolor="none", height=0.65)
+        for bar, pct in zip(bars_l, probs_l[::-1]):
+            ax_live.text(bar.get_width() + 0.1, bar.get_y() + bar.get_height() / 2, f"{pct:.1f}%", va="center", color="#ffffff", fontsize=8.5, fontweight="bold")
+        ax_live.set_xlabel("Championship Probability (%)", color="#b0bbd0", fontsize=9)
+        ax_live.tick_params(colors="#f1f5f9", labelsize=9)
+        for spine in ["top", "right"]: ax_live.spines[spine].set_visible(False)
+        ax_live.spines["bottom"].set_color("#374151"); ax_live.spines["left"].set_color("#374151")
+        ax_live.set_title("Live Updated Championship Probabilities (500,000 runs)", color="#f1f5f9", fontsize=11, fontweight="bold", pad=10)
+        st.pyplot(fig_live)
+        plt.close(fig_live)
+
+        st.markdown("---")
+
+    # ── DISPLAY: Original Pre-Tournament Odds ────────────────────────────
+    st.markdown('<div class="section-header">📊 Pre-Tournament Championship Odds (Selection Sunday)</div>', unsafe_allow_html=True)
 
     if len(champs) == 0:
         st.warning("Run simulation first.")
@@ -2043,7 +2263,7 @@ with tab4:
         ax3.tick_params(colors="#f1f5f9", labelsize=9)
         for spine in ["top","right"]: ax3.spines[spine].set_visible(False)
         ax3.spines["bottom"].set_color("#374151"); ax3.spines["left"].set_color("#374151")
-        ax3.set_title("Simulated Championship Probabilities (500,000 runs)", color="#f1f5f9", fontsize=11, fontweight="bold", pad=10)
+        ax3.set_title("Pre-Tournament Championship Probabilities (500,000 runs)", color="#f1f5f9", fontsize=11, fontweight="bold", pad=10)
         st.pyplot(fig3)
         plt.close(fig3)
 
@@ -2082,6 +2302,73 @@ _TOURNEY_DATES = [
     "20260324","20260325","20260327","20260328","20260329",
     "20260330","20260404","20260405","20260407",
 ]
+
+
+def fetch_game_box_score(event_id):
+    """Extract actual game stats from ESPN summary endpoint the moment a game ends.
+    Returns dict with per-team FG%, rebounds, turnovers, assists, half scores, etc.
+    Keys: t1_name, t1_fg_pct, t1_rebounds, t1_turnovers, t1_h1, t1_h2, ... (t2_ same)
+    All values are raw strings as ESPN returns them — caller converts to float as needed.
+    Uses session_state cache (not st.cache_data) so empty/error results are NOT cached."""
+    # Cache successful results in session_state so we don't re-fetch per rerun
+    _bs_cache_key = f"_box_score_{event_id}"
+    if _bs_cache_key in st.session_state:
+        cached = st.session_state[_bs_cache_key]
+        if cached:  # only return if non-empty (retry empty results)
+            return cached
+    if not _REQUESTS_OK or not event_id:
+        return {}
+    try:
+        url = ESPN_PLAYBYPLAY.format(event_id=event_id)
+        resp = _requests.get(url, timeout=8, headers={"User-Agent": "statlasberg/1.0"})
+        resp.raise_for_status()
+        data = resp.json()
+
+        boxscore = data.get("boxscore", {})
+        teams = boxscore.get("teams", [])
+        if len(teams) < 2:
+            return {}
+
+        result = {}
+        for i, td in enumerate(teams[:2]):
+            pfx = f"t{i+1}_"
+            result[f"{pfx}name"] = td.get("team", {}).get("displayName", "")
+            stats = {s.get("name", ""): s.get("displayValue", "")
+                     for s in td.get("statistics", [])}
+            for espn_key, out_key in [
+                ("fieldGoalPct",           "fg_pct"),
+                ("threePointFieldGoalPct", "fg3_pct"),
+                ("freeThrowPct",           "ft_pct"),
+                ("totalRebounds",          "rebounds"),
+                ("offensiveRebounds",      "off_reb"),
+                ("turnovers",              "turnovers"),
+                ("assists",                "assists"),
+                ("steals",                 "steals"),
+                ("blocks",                 "blocks"),
+                ("fieldGoalsMade-fieldGoalsAttempted", "fg_made_att"),
+            ]:
+                result[f"{pfx}{out_key}"] = stats.get(espn_key, "")
+
+        # Line scores (points per half/OT) from header competitions
+        header = data.get("header", {})
+        comps_list = header.get("competitions", [])
+        if comps_list:
+            competitors = comps_list[0].get("competitors", [])
+            for i, comp in enumerate(competitors[:2]):
+                pfx = f"t{i+1}_"
+                ls = comp.get("linescores", [])
+                result[f"{pfx}h1"] = ls[0].get("displayValue", "") if len(ls) > 0 else ""
+                result[f"{pfx}h2"] = ls[1].get("displayValue", "") if len(ls) > 1 else ""
+
+        # Cache only non-empty results
+        if result:
+            st.session_state[_bs_cache_key] = result
+        return result
+    except Exception as _bs_err:
+        print(f"[Statlasberg] Box score fetch failed for event {event_id}: {_bs_err}")
+        return {}
+
+
 @st.cache_data(ttl=180)
 def fetch_all_tournament_games(bracket_teams):
     """Fetch all completed 2026 tournament games from ESPN, querying every
@@ -2110,12 +2397,18 @@ def fetch_all_tournament_games(bracket_teams):
     for d in _TOURNEY_DATES:
         if d > today_str:
             break
+        # ── Network fetch: separate try so HTTP errors don't kill game parsing ──
         try:
             url = ESPN_SCOREBOARD + f"&dates={d}"
             resp = _requests.get(url, timeout=6, headers={"User-Agent": "statlasberg/1.0"})
             resp.raise_for_status()
             data = resp.json()
-            for event in data.get("events", []):
+        except Exception as _net_err:
+            print(f"[Statlasberg] ESPN fetch failed for {d}: {_net_err}")
+            continue
+        # ── Parse each event individually so one bad game doesn't skip the date ──
+        for event in data.get("events", []):
+            try:
                 eid = event.get("id", "")
                 if eid in seen:
                     continue
@@ -2145,8 +2438,8 @@ def fetch_all_tournament_games(bracket_teams):
                 box = fetch_game_box_score(eid)
                 # ESPN summary may return teams in different order than scoreboard.
                 # Use stored t1_name/t2_name to detect and swap if needed.
-                box_t1 = _norm(box.get("t1_name", ""), bt_set)
-                box_t2 = _norm(box.get("t2_name", ""), bt_set)
+                box_t1 = _norm(box.get("t1_name", ""), bracket_teams)
+                box_t2 = _norm(box.get("t2_name", ""), bracket_teams)
                 if box_t1 and box_t2 and box_t1 == t2_name and box_t2 == t1_name:
                     swapped = {}
                     for k, v in box.items():
@@ -2163,8 +2456,9 @@ def fetch_all_tournament_games(bracket_teams):
                     "headline": headline,
                     **box,  # attach all box score fields (fg_pct, rebounds, etc.)
                 }
-        except Exception:
-            continue
+            except Exception as _evt_err:
+                print(f"[Statlasberg] Error parsing event {event.get('id','?')} on {d}: {_evt_err}")
+                continue
     return seen
 
 
@@ -2407,7 +2701,11 @@ def _round_from_headline(hl):
 
 
 def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
-    """Load persistent results from CSV, merge fresh ESPN data, save, return DataFrame."""
+    """Load persistent results from CSV, merge fresh ESPN data, save, return DataFrame.
+    Uses session_state cache so this only runs once per Streamlit rerun cycle."""
+    _cache_key = "_recap_df_cache"
+    if _cache_key in st.session_state:
+        return st.session_state[_cache_key]
     # Build lookup tables
     seed_lkp  = {}; flag_lkp = {}; score_lkp = {}; hl_lkp = {}
     for _, r in in_bracket.iterrows():
@@ -2453,8 +2751,8 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
                 old_df.loc[bad2, "round"] = "R64"  # safest default for unclassified tournament games
             existing_ids = set(str(x) for x in old_df["event_id"].tolist())
             existing_rows = old_df.to_dict("records")
-        except Exception:
-            pass
+        except Exception as _csv_err:
+            print(f"[Statlasberg] Error reading results CSV: {_csv_err}")
 
     # Build team-pair set from existing rows to prevent duplicates even with different event IDs
     existing_pairs = set()
@@ -2551,14 +2849,19 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
     for _col in ("winner_flags", "loser_flags", "winner_hot", "loser_hot", "narrative", "round", "region"):
         if _col in result_df.columns:
             result_df[_col] = result_df[_col].fillna("").astype(str)
+    # Ensure date column is consistently str (prevents sort errors from int/str mix)
+    if "date" in result_df.columns:
+        result_df["date"] = result_df["date"].astype(str)
 
     # Always save — ensures normalized round labels are persisted back to disk
     try:
         os.makedirs(os.path.dirname(_RESULTS_CSV), exist_ok=True)
         result_df.to_csv(_RESULTS_CSV, index=False)
-    except Exception:
-        pass
+    except Exception as _save_err:
+        print(f"[Statlasberg] Error saving results CSV: {_save_err}")
 
+    # Cache in session_state so subsequent calls in the same rerun are instant
+    st.session_state["_recap_df_cache"] = result_df
     return result_df
 
 
@@ -2571,6 +2874,7 @@ with tab5:
     with _bkt_hdr2:
         if st.button("🔄 Refresh", key="bracket_refresh"):
             st.cache_data.clear()
+            st.session_state.pop("_recap_df_cache", None)
             st.rerun()
 
     BRACKET_PAIRS = [(1, 16), (8, 9), (5, 12), (4, 13), (6, 11), (3, 14), (7, 10), (2, 15)]
@@ -2578,19 +2882,18 @@ with tab5:
     if "region" not in in_bracket.columns or len(in_bracket) == 0:
         st.warning("Bracket data not loaded.")
     else:
+        # Compute bracket data for this tab (with ESPN fetch + CSV update)
         all_round_matchups = build_round_matchups(in_bracket)
-
-        # Fetch live ESPN results — same cache as Recap tab (3 min TTL)
         _bkt_team_set = frozenset(in_bracket["team"].tolist())
         _bkt_recap = load_or_update_results(_bkt_team_set, in_bracket, all_round_matchups)
-
-        # Adapt contender scores upward for teams that won as underdogs
         _adapted_scores = _compute_adapted_scores(in_bracket, _bkt_recap)
-
         live_rounds = build_bracket_live(in_bracket, _bkt_recap, _adapted_scores)
 
         # ── Record header ────────────────────────────────────────────────────
         if not _bkt_recap.empty and "correct" in _bkt_recap.columns:
+            # Normalize date column to str so sort never hits int/str mix
+            if "date" in _bkt_recap.columns:
+                _bkt_recap["date"] = _bkt_recap["date"].astype(str)
             _total_bkt = len(_bkt_recap)
             _correct_bkt = int(_bkt_recap["correct"].sum())
             _pct_bkt = _correct_bkt / _total_bkt * 100 if _total_bkt else 0
@@ -2974,61 +3277,6 @@ def fetch_live_games():
         return []
 
 
-@st.cache_data(ttl=3600)
-def fetch_game_box_score(event_id):
-    """Extract actual game stats from ESPN summary endpoint the moment a game ends.
-    Returns dict with per-team FG%, rebounds, turnovers, assists, half scores, etc.
-    Keys: t1_name, t1_fg_pct, t1_rebounds, t1_turnovers, t1_h1, t1_h2, ... (t2_ same)
-    All values are raw strings as ESPN returns them — caller converts to float as needed."""
-    if not _REQUESTS_OK or not event_id:
-        return {}
-    try:
-        url = ESPN_PLAYBYPLAY.format(event_id=event_id)
-        resp = _requests.get(url, timeout=8, headers={"User-Agent": "statlasberg/1.0"})
-        resp.raise_for_status()
-        data = resp.json()
-
-        boxscore = data.get("boxscore", {})
-        teams = boxscore.get("teams", [])
-        if len(teams) < 2:
-            return {}
-
-        result = {}
-        for i, td in enumerate(teams[:2]):
-            pfx = f"t{i+1}_"
-            result[f"{pfx}name"] = td.get("team", {}).get("displayName", "")
-            stats = {s.get("name", ""): s.get("displayValue", "")
-                     for s in td.get("statistics", [])}
-            for espn_key, out_key in [
-                ("fieldGoalPct",           "fg_pct"),
-                ("threePointFieldGoalPct", "fg3_pct"),
-                ("freeThrowPct",           "ft_pct"),
-                ("totalRebounds",          "rebounds"),
-                ("offensiveRebounds",      "off_reb"),
-                ("turnovers",              "turnovers"),
-                ("assists",                "assists"),
-                ("steals",                 "steals"),
-                ("blocks",                 "blocks"),
-                ("fieldGoalsMade-fieldGoalsAttempted", "fg_made_att"),
-            ]:
-                result[f"{pfx}{out_key}"] = stats.get(espn_key, "")
-
-        # Line scores (points per half/OT) from header competitions
-        header = data.get("header", {})
-        comps_list = header.get("competitions", [])
-        if comps_list:
-            competitors = comps_list[0].get("competitors", [])
-            for i, comp in enumerate(competitors[:2]):
-                pfx = f"t{i+1}_"
-                ls = comp.get("linescores", [])
-                result[f"{pfx}h1"] = ls[0].get("displayValue", "") if len(ls) > 0 else ""
-                result[f"{pfx}h2"] = ls[1].get("displayValue", "") if len(ls) > 1 else ""
-
-        return result
-    except Exception:
-        return {}
-
-
 def fetch_play_by_play(event_id):
     """Return last N plays and current scoring run for a game."""
     if not _REQUESTS_OK or not event_id:
@@ -3122,6 +3370,7 @@ with tab6:
     with ctrl2:
         if st.button("🔄 Refresh", key="live_refresh_btn"):
             st.cache_data.clear()
+            st.session_state.pop("_recap_df_cache", None)
     if auto_ref:
         st.markdown('<meta http-equiv="refresh" content="60">', unsafe_allow_html=True)
 
@@ -4533,6 +4782,7 @@ with tab8:
     with rc2:
         if st.button("🔄 Refresh Results", key="recap_refresh"):
             st.cache_data.clear()
+            st.session_state.pop("_recap_df_cache", None)
             st.rerun()
 
     bracket_team_set = frozenset(in_bracket["team"].tolist()) if len(in_bracket) > 0 else frozenset()
@@ -4842,6 +5092,7 @@ with tab9:
     with _tl_hdr2:
         if st.button("🔄 Refresh", key="tossup_refresh"):
             st.cache_data.clear()
+            st.session_state.pop("_recap_df_cache", None)
             st.rerun()
 
     # ── Recompute bracket data using cached functions ────────────────────────
@@ -5103,6 +5354,7 @@ with tab10:
     with _sp_hdr2:
         if st.button("🔄 Refresh", key="predict_refresh"):
             st.cache_data.clear()
+            st.session_state.pop("_recap_df_cache", None)
             st.rerun()
 
     # ── Recompute bracket data ───────────────────────────────────────────
