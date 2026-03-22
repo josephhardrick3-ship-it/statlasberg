@@ -39,3 +39,5 @@ event_id,date,round,region,t1,t2,winner,loser,t1_score,t2_score,model_pick,model
 401856531,20260321,R32,East,Michigan State,Louisville,Michigan State,Louisville,77,69,Michigan State,0.587,True,False,3,6,Dangerous,Dangerous,,,"✅ Michigan State def. Louisville 77–69 (#3 over #6). Model picked Michigan State at 59% confidence — correct.
 Louisville actually shot better (47% vs 41%), but Michigan State's turnover advantage (11 vs 15) told a different story. The model pre-game read held up despite the shooting numbers.
 Model was only 58% here but won by 8 — the actual performance was more one-sided than expected. Worth checking whether this team's metrics are underrated.",41.0,35.0,67.0,32.0,11.0,11.0,16.0,5.0,2.0,36.0,41.0,47.0,42.0,74.0,39.0,11.0,15.0,22.0,4.0,5.0,31.0,38.0
+401856530,20260321,R32,East,Duke,Texas Christian,Duke,Texas Christian,81,58,Texas Christian,0.522,False,False,1,9,,Dangerous,,,,,,,,,,,,,,,,,,,,,,,,,
+401856533,20260321,R32,West,Texas,Gonzaga,Texas,Gonzaga,74,68,Gonzaga,0.634,False,True,11,3,Dangerous,,,,,,,,,,,,,,,,,,,,,,,,,,

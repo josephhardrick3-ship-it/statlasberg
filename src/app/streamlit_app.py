@@ -568,13 +568,14 @@ def build_bracket_live(bkt_df, recap_df, adapted_scores=None):
                 {r["team"]: safe_f(r.get("contender_score", 50)) for _, r in bkt_df.iterrows()}
     seed_lkp  = {r["team"]: (int(r["seed"]) if pd.notna(r.get("seed")) else 0) for _, r in bkt_df.iterrows()}
 
-    actual = {}  # frozenset({winner, loser}) → winner
+    actual = {}  # frozenset({winner, loser}) → (winner, model_pick_from_csv)
     if recap_df is not None and not recap_df.empty:
         for _, row in recap_df.iterrows():
             w = str(row.get("winner", "") or "").strip()
             l = str(row.get("loser",  "") or "").strip()
+            mp = str(row.get("model_pick", "") or "").strip()
             if w and l:
-                actual[frozenset({w, l})] = w
+                actual[frozenset({w, l})] = (w, mp)
 
     def resolve(t1, t2):
         if not t1 or not t2:
@@ -592,9 +593,12 @@ def build_bracket_live(bkt_df, recap_df, adapted_scores=None):
         mwp = max(p1, 1 - p1)
         key = frozenset({t1, t2})
         if key in actual:
-            aw = actual[key]; al = t2 if aw == t1 else t1
-            return {"winner": aw, "loser": al, "winner_p": mwp, "model_winner": mw,
-                    "completed": True, "model_correct": (aw == mw)}
+            aw, csv_pick = actual[key]
+            al = t2 if aw == t1 else t1
+            # Use CSV model_pick for completed games (the pick the user actually saw)
+            recorded_mw = csv_pick if csv_pick else mw
+            return {"winner": aw, "loser": al, "winner_p": mwp, "model_winner": recorded_mw,
+                    "completed": True, "model_correct": (aw == recorded_mw)}
         return {"winner": mw, "loser": ml, "winner_p": mwp, "model_winner": mw,
                 "completed": False, "model_correct": None}
 
@@ -2612,6 +2616,8 @@ with tab5:
                     f'</div>', unsafe_allow_html=True)
             else:
                 # ── model projection ──────────────────────────────────────
+                # Use the model_winner from resolve() (which includes tossup) for the pick,
+                # but show contender_score-based probabilities for display
                 t1_row = in_bracket[in_bracket["team"] == t1]
                 t2_row = in_bracket[in_bracket["team"] == t2]
                 c1 = safe_f(t1_row.iloc[0].get("contender_score", 50)) if len(t1_row) else 50
