@@ -2143,6 +2143,17 @@ def fetch_all_tournament_games(bracket_teams):
                 winner = t1_name if t1_score >= t2_score else t2_name
                 loser  = t2_name if t1_score >= t2_score else t1_name
                 box = fetch_game_box_score(eid)
+                # ESPN summary may return teams in different order than scoreboard.
+                # Use stored t1_name/t2_name to detect and swap if needed.
+                box_t1 = _norm(box.get("t1_name", ""), bt_set)
+                box_t2 = _norm(box.get("t2_name", ""), bt_set)
+                if box_t1 and box_t2 and box_t1 == t2_name and box_t2 == t1_name:
+                    swapped = {}
+                    for k, v in box.items():
+                        if k.startswith("t1_"):   swapped["t2_" + k[3:]] = v
+                        elif k.startswith("t2_"): swapped["t1_" + k[3:]] = v
+                        else:                     swapped[k] = v
+                    box = swapped
                 seen[eid] = {
                     "event_id": eid, "date": d,
                     "t1": t1_name, "t2": t2_name,
@@ -2445,11 +2456,23 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
         except Exception:
             pass
 
+    # Build team-pair set from existing rows to prevent duplicates even with different event IDs
+    existing_pairs = set()
+    for er in existing_rows:
+        t1e = str(er.get("t1", "") or "").strip()
+        t2e = str(er.get("t2", "") or "").strip()
+        if t1e and t2e:
+            existing_pairs.add(frozenset({t1e, t2e}))
+
     # Fetch fresh from ESPN (multi-date)
     fresh_games = fetch_all_tournament_games(bracket_teams)
     new_rows = []
     for eid, g in fresh_games.items():
         if str(eid) in existing_ids:
+            continue
+        # Also skip if same team pair already exists (prevents duplicates from different event IDs)
+        pair = frozenset({g["t1"], g["t2"]})
+        if pair in existing_pairs:
             continue
         t1, t2 = g["t1"], g["t2"]
         winner, loser = g["winner"], g["loser"]
