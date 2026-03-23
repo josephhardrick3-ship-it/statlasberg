@@ -83,9 +83,9 @@ def _efficiency_score(df: pd.DataFrame) -> pd.Series:
     # Only use NET ranking when real data is available (>10% of teams have it)
     if "net_rank" in df.columns and df["net_rank"].notna().mean() > 0.10:
         spec = {
-            "barthag":              (0.35, True),
-            "adj_margin":           (0.25, True),
-            "net_rank":             (0.25, False),  # lower rank = better
+            "barthag":              (0.25, True),
+            "adj_margin":           (0.35, True),   # strongest March predictor — boosted
+            "net_rank":             (0.25, False),   # lower rank = better
             "strength_of_schedule": (0.10, True),
             "wab":                  (0.05, True),
         }

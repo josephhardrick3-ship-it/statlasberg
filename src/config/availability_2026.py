@@ -54,7 +54,9 @@ CONTENDER_SCORE_ADJ: dict[str, float] = {
     # (coach Scheyer: "we'd have to advance to a Final Four").
     # Was starting PG in 30/31 games, 8.5 ppg / 2.8 ast.
     # Patrick Ngongba II (foot soreness) is EXPECTED BACK for NCAA opener — no adj.
-    "Duke": -12,
+    # TOURNAMENT UPDATE: Duke won R64 by 6, R32 by 23 without Foster — clearly adapted.
+    # Original -12 was too harsh; team depth absorbed the loss.
+    "Duke": -5,
 
     # BYU — Richie Saunders (key shooter, torn ACL in February)
     #      + Dawson Baker (shooter, torn ACL in November)
@@ -71,7 +73,8 @@ CONTENDER_SCORE_ADJ: dict[str, float] = {
     # Injured vs. Alabama (Feb 28). Returned for SEC tournament but coach Rick Barnes
     # confirmed "he is NOT 100%." Playing through pain with limited explosiveness.
     # Projected top-10 pick, 17.4 ppg / 6.4 rpg. Partial effectiveness expected.
-    "Tennessee": -4,
+    # TOURNAMENT UPDATE: Won R64 by 22, R32 by 7 — Ament contributing, near full strength.
+    "Tennessee": -1,
 
     # Michigan — L.J. Cason (backup guard, season-ending ACL)
     # Rotation piece gone — places added pressure on Elliot Cadeau to be consistent.

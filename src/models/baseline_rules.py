@@ -5,12 +5,12 @@ log = get_logger(__name__)
 
 # ── Group weights (must sum to 1.0) ──────────────────────────────────────────
 CONTENDER_WEIGHTS = {
-    "efficiency_score":   0.28,   # overall quality (barthag + NET + adj_margin)
+    "efficiency_score":   0.32,   # overall quality — adj_margin is the top March predictor
     "defense_score":      0.20,   # elite defense travels
-    "clutch_score":       0.18,   # clutch: close games + Q1 wins + FT + last-10
+    "clutch_score":       0.12,   # clutch: close games + Q1 wins (reduced — noisy, small sample)
     "guard_play_score":   0.13,   # backcourt execution
-    "rebounding_score":   0.12,   # glass dominance
-    "consistency_score":  0.06,   # margin variance + blowout rate
+    "rebounding_score":   0.10,   # glass dominance
+    "consistency_score":  0.10,   # margin variance + blowout rate (boosted — consistent teams survive)
     "region_bias_score":  0.03,   # geographic advantage (low weight)
 }
 
@@ -225,7 +225,7 @@ def score_all_teams(features_df, apply_availability: bool = True):
     if "model_vs_committee_gap" in df.columns:
         gap = df["model_vs_committee_gap"]
         df["underseeded_flag"] = gap >= 15
-        df["overseeded_flag"]  = gap <= -15
+        df["overseeded_flag"]  = gap <= -18   # tightened from -15; -18 captures ~11 teams after weight rebalance
     else:
         df["underseeded_flag"] = False
         df["overseeded_flag"]  = False
@@ -256,5 +256,14 @@ def score_all_teams(features_df, apply_availability: bool = True):
         df["high_foul_dependence_flag"] = df["foul_dependence"] > foul_p75
     else:
         df["high_foul_dependence_flag"] = False
+
+    # ── OVERSEEDED haircut: small penalty for teams the committee overvalues ──
+    # In tossup games, this nudges the model toward the underdog/DANGEROUS team.
+    if "overseeded_flag" in df.columns:
+        overseeded_mask = df["overseeded_flag"].astype(bool)
+        n_os = overseeded_mask.sum()
+        df.loc[overseeded_mask, "contender_score"] -= 2.0
+        df["contender_score"] = df["contender_score"].clip(0, 100).round(1)
+        log.info(f"OVERSEEDED haircut: -2.0pt applied to {n_os} teams")
 
     return df
