@@ -643,12 +643,24 @@ def build_bracket_live(bkt_df, recap_df, adapted_scores=None):
                 {r["team"]: safe_f(r.get("contender_score", 50)) for _, r in bkt_df.iterrows()}
     seed_lkp  = {r["team"]: (int(r["seed"]) if pd.notna(r.get("seed")) else 0) for _, r in bkt_df.iterrows()}
 
+    # Build name normaliser: results CSV may use different variants (e.g. "Prairie View")
+    # than the bracket (e.g. "Prairie View A&M").  Map any known alias → bracket canonical.
+    _bracket_names = {r["team"] for _, r in bkt_df.iterrows()}
+    _to_bkt = {n: n for n in _bracket_names}
+    for _alias, _canon in _BRACKET_NORM.items():
+        if _canon in _bracket_names:
+            _to_bkt[_alias] = _canon
+        if _alias in _bracket_names:
+            _to_bkt[_canon] = _alias
+    def _bn(name: str) -> str:
+        return _to_bkt.get(name, name)
+
     actual = {}  # frozenset({winner, loser}) → (winner, model_pick_from_csv)
     if recap_df is not None and not recap_df.empty:
         for _, row in recap_df.iterrows():
-            w = str(row.get("winner", "") or "").strip()
-            l = str(row.get("loser",  "") or "").strip()
-            mp = str(row.get("model_pick", "") or "").strip()
+            w = _bn(str(row.get("winner", "") or "").strip())
+            l = _bn(str(row.get("loser",  "") or "").strip())
+            mp = _bn(str(row.get("model_pick", "") or "").strip())
             if w and l:
                 actual[frozenset({w, l})] = (w, mp)
 
@@ -2839,6 +2851,10 @@ def load_or_update_results(bracket_teams, in_bracket, all_round_matchups):
         row_dict["narrative"] = game_narrative(row_dict, in_bracket)
         new_rows.append(row_dict)
 
+    if new_rows:
+        st.toast(f"✅ Found {len(new_rows)} new game(s) from ESPN!", icon="🏀")
+    elif st.session_state.get("_did_refresh"):
+        st.toast(f"Up to date — all {len(existing_rows)} games already tracked", icon="✅")
     all_rows = existing_rows + new_rows
     if not all_rows:
         return pd.DataFrame()
@@ -2875,6 +2891,12 @@ with tab5:
         if st.button("🔄 Refresh", key="bracket_refresh"):
             st.cache_data.clear()
             st.session_state.pop("_recap_df_cache", None)
+            # Also clear box_score caches so they re-fetch
+            for k in list(st.session_state.keys()):
+                if k.startswith("_box_score_"):
+                    del st.session_state[k]
+            st.session_state["_did_refresh"] = True
+            st.session_state["_last_refresh"] = datetime.now().strftime("%I:%M %p")
             st.rerun()
 
     BRACKET_PAIRS = [(1, 16), (8, 9), (5, 12), (4, 13), (6, 11), (3, 14), (7, 10), (2, 15)]
@@ -2913,7 +2935,12 @@ with tab5:
                     _rnd_strs_bkt.append(f"{_rnd_bkt} {int(_rdf_bkt['correct'].sum())}/{len(_rdf_bkt)}")
             _hc[2].metric("📊 By Round", " · ".join(_rnd_strs_bkt) or "—")
             _hc[3].metric("🎯 Confidence", "HIGH" if _pct_bkt > 75 else "MODERATE" if _pct_bkt > 60 else "CALIBRATING")
+            _last_ref = st.session_state.get("_last_refresh", "")
+            _ref_note = f" · Last refresh: {_last_ref}" if _last_ref else ""
+            st.caption(f"📡 Auto-synced with ESPN · {_total_bkt} games tracked{_ref_note}")
             st.markdown("---")
+            # Clear the refresh flag after showing the result
+            st.session_state.pop("_did_refresh", None)
 
         # ── Helper: render one matchup card ─────────────────────────────────
         def _bkt_card(m, round_tag=""):
@@ -2931,12 +2958,22 @@ with tab5:
                 # ── completed game ────────────────────────────────────────
                 w_seed = s1 if winner == t1 else s2
                 l_seed = s2 if winner == t1 else s1
-                verdict = "Called it ✓" if ok else f"Missed — had {mw}"
-                v_color = "#4ade80" if ok else "#f87171"
-                border  = "#4ade80" if ok else "#ef4444"
+                verdict = "✅ Called it" if ok else f"❌ Missed — had {mw}"
+                if ok:
+                    bg     = "#0a1f0a"
+                    border = "#22c55e"
+                    w_color = "#4ade80"
+                    v_color = "#4ade80"
+                    icon    = "✅"
+                else:
+                    bg     = "#1f0a0a"
+                    border = "#ef4444"
+                    w_color = "#f87171"
+                    v_color = "#f87171"
+                    icon    = "❌"
                 st.markdown(
-                    f'<div style="background:#0f1a12;border:2px solid {border};border-radius:8px;padding:8px 12px;margin:3px 0">'
-                    f'<div style="color:#4ade80;font-weight:800;font-size:1rem">🏆 #{w_seed} {winner}</div>'
+                    f'<div style="background:{bg};border:2px solid {border};border-radius:8px;padding:8px 12px;margin:3px 0">'
+                    f'<div style="color:{w_color};font-weight:800;font-size:1rem">{icon} #{w_seed} {winner}</div>'
                     f'<div style="color:#64748b;font-size:0.78rem;margin-top:2px">def. #{l_seed} {loser}</div>'
                     f'<div style="color:{v_color};font-size:0.72rem;margin-top:4px">{verdict} · {wp*100:.0f}% conf</div>'
                     f'</div>', unsafe_allow_html=True)
@@ -3371,6 +3408,12 @@ with tab6:
         if st.button("🔄 Refresh", key="live_refresh_btn"):
             st.cache_data.clear()
             st.session_state.pop("_recap_df_cache", None)
+            for k in list(st.session_state.keys()):
+                if k.startswith("_box_score_"):
+                    del st.session_state[k]
+            st.session_state["_did_refresh"] = True
+            st.session_state["_last_refresh"] = datetime.now().strftime("%I:%M %p")
+            st.rerun()
     if auto_ref:
         st.markdown('<meta http-equiv="refresh" content="60">', unsafe_allow_html=True)
 

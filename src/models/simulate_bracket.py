@@ -106,7 +106,11 @@ def _compute_win_prob(fa: dict, fb: dict) -> float:
 
 
 def simulate_bracket(bracket_df, features_df, n_sims=10000, seed=42):
-    """Run full bracket simulation n_sims times."""
+    """Run full bracket simulation n_sims times.
+
+    Returns a DataFrame with per-team probabilities for each round:
+      sweet_16_pct, elite_8_pct, final_four_pct, championship_pct
+    """
     log.info(f"Simulating bracket {n_sims} times")
 
     feat = {}
@@ -126,13 +130,25 @@ def simulate_bracket(bracket_df, features_df, n_sims=10000, seed=42):
         region_teams[region] = ordered
 
     rng = np.random.default_rng(seed)
-    champions = {}
+
+    # Round-by-round counters
+    # Regional rounds: 16→8 (R32), 8→4 (S16), 4→2 (E8), 2→1 (FF)
+    # Map bracket length BEFORE round plays → round name of survivors
+    #   len=16 → R64 round → survivors made R32
+    #   len=8  → R32 round → survivors made Sweet 16
+    #   len=4  → S16 round → survivors made Elite 8
+    #   len=2  → E8  round → survivor  made Final Four
+    sweet_16   = {}   # advanced to Sweet 16 (won R32)
+    elite_8    = {}   # advanced to Elite 8  (won Sweet 16)
+    final_four = {}   # advanced to Final Four (won regional final)
+    champions  = {}   # won the championship
 
     for _ in range(n_sims):
-        final_four = []
+        ff_teams = []
         for region in regions:
             bracket = list(region_teams[region])
             while len(bracket) > 1:
+                bracket_len = len(bracket)
                 nxt = []
                 for i in range(0, len(bracket), 2):
                     ta, sa = bracket[i]
@@ -143,16 +159,25 @@ def simulate_bracket(bracket_df, features_df, n_sims=10000, seed=42):
                     winner = ta if rng.random() < prob_a else tb
                     ws = sa if winner == ta else sb
                     nxt.append((winner, ws))
-                bracket = nxt
-            final_four.append(bracket[0])
 
-        if len(final_four) >= 4:
-            ta, sa = final_four[0]; tb, sb = final_four[1]
+                    # Track round advancement
+                    if bracket_len == 8:      # R32 round → winners make Sweet 16
+                        sweet_16[winner] = sweet_16.get(winner, 0) + 1
+                    elif bracket_len == 4:    # S16 round → winners make Elite 8
+                        elite_8[winner] = elite_8.get(winner, 0) + 1
+                    elif bracket_len == 2:    # E8 round  → winner makes Final Four
+                        final_four[winner] = final_four.get(winner, 0) + 1
+
+                bracket = nxt
+            ff_teams.append(bracket[0])
+
+        if len(ff_teams) >= 4:
+            ta, sa = ff_teams[0]; tb, sb = ff_teams[1]
             p = _compute_win_prob({**feat.get(ta, {}), "seed": sa}, {**feat.get(tb, {}), "seed": sb})
             w1 = ta if rng.random() < p else tb
             s1 = sa if w1 == ta else sb
 
-            ta, sa = final_four[2]; tb, sb = final_four[3]
+            ta, sa = ff_teams[2]; tb, sb = ff_teams[3]
             p = _compute_win_prob({**feat.get(ta, {}), "seed": sa}, {**feat.get(tb, {}), "seed": sb})
             w2 = ta if rng.random() < p else tb
             s2 = sa if w2 == ta else sb
@@ -161,11 +186,24 @@ def simulate_bracket(bracket_df, features_df, n_sims=10000, seed=42):
             champ = w1 if rng.random() < p else w2
             champions[champ] = champions.get(champ, 0) + 1
 
-    champ_df = pd.DataFrame([
-        {"team": t, "championships": c, "championship_pct": round(c / n_sims * 100, 2)}
-        for t, c in sorted(champions.items(), key=lambda x: -x[1])
-    ])
+    # ── Build results DataFrame with all rounds ────────────────────────────
+    all_teams = set(list(sweet_16) + list(elite_8) + list(final_four) + list(champions))
+    rows = []
+    for t in all_teams:
+        rows.append({
+            "team": t,
+            "sweet_16": sweet_16.get(t, 0),
+            "sweet_16_pct": round(sweet_16.get(t, 0) / n_sims * 100, 2),
+            "elite_8": elite_8.get(t, 0),
+            "elite_8_pct": round(elite_8.get(t, 0) / n_sims * 100, 2),
+            "final_four": final_four.get(t, 0),
+            "final_four_pct": round(final_four.get(t, 0) / n_sims * 100, 2),
+            "championships": champions.get(t, 0),
+            "championship_pct": round(champions.get(t, 0) / n_sims * 100, 2),
+        })
 
-    if len(champ_df) > 0:
-        log.info(f"Simulation complete. Top: {champ_df.iloc[0]['team']} ({champ_df.iloc[0]['championship_pct']}%)")
-    return champ_df
+    result_df = pd.DataFrame(rows).sort_values("championship_pct", ascending=False).reset_index(drop=True)
+
+    if len(result_df) > 0:
+        log.info(f"Simulation complete. Top: {result_df.iloc[0]['team']} ({result_df.iloc[0]['championship_pct']}%)")
+    return result_df

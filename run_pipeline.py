@@ -174,6 +174,13 @@ def main():
                 bar = "█" * int(row["championship_pct"] / 2)
                 print(f"  {row['team']:25s} {row['championship_pct']:6.2f}%  {bar}")
 
+            if "elite_8_pct" in champ_df.columns:
+                print(f"\nElite 8 Advancement Probabilities:")
+                e8_sorted = champ_df.sort_values("elite_8_pct", ascending=False)
+                for _, row in e8_sorted.head(20).iterrows():
+                    bar = "█" * int(row["elite_8_pct"] / 3)
+                    print(f"  {row['team']:25s} {row['elite_8_pct']:6.2f}%  {bar}")
+
     print(f"\nOutputs saved to data/outputs/")
     return scores_df
 
