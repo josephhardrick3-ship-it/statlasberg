@@ -1310,9 +1310,12 @@ def predict_final_score(t1_name, t2_name, bkt_df, tournament_factor=0.975):
     DEF_COEF = -0.083819
     TEAM_INTERCEPT = -98.014121
     # Total calibration: cal_total = TOT_COEF * raw_total + GAP_COEF * margin_gap + TOT_INTERCEPT
+    # Recalibrated with 56 actual 2026 tournament games (bias fix: -2 pts)
     TOT_COEF = 0.866839
     GAP_COEF = 0.655479
-    TOT_INTERCEPT = 12.821787
+    TOT_INTERCEPT = 10.821787
+    # Seed-based spread adjustment: higher seeds win by more in tournament
+    SEED_SPREAD_COEF = 0.6
 
     r1 = bkt_df[bkt_df["team"] == t1_name]
     r2 = bkt_df[bkt_df["team"] == t2_name]
@@ -1332,6 +1335,8 @@ def predict_final_score(t1_name, t2_name, bkt_df, tournament_factor=0.975):
     tempo2 = safe_f(r2.get("tempo"), 0)
     cs1 = safe_f(r1.get("contender_score", 50))
     cs2 = safe_f(r2.get("contender_score", 50))
+    seed1 = safe_f(r1.get("seed"), 8)
+    seed2 = safe_f(r2.get("seed"), 8)
 
     has_efficiency = off1 > 0 and def1 > 0 and off2 > 0 and def2 > 0
     has_tempo = tempo1 > 0 and tempo2 > 0
@@ -1381,6 +1386,13 @@ def predict_final_score(t1_name, t2_name, bkt_df, tournament_factor=0.975):
                 model_spread = max(1.0, model_spread)
             else:
                 model_spread = min(-1.0, model_spread)
+
+    # --- Seed-based spread adjustment ---
+    # Tournament data shows higher seeds win by more than contender_score alone
+    # predicts. Add 0.6 pts per seed gap (e.g., 1-seed vs 16-seed: +9 pts).
+    seed_adj = SEED_SPREAD_COEF * (seed2 - seed1)
+    model_spread += seed_adj
+    model_spread = max(-30.0, min(30.0, model_spread))
 
     # --- Total estimation: calibrated regression ---
     if has_efficiency:
