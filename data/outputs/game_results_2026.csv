@@ -72,3 +72,32 @@ Model was only 47% here but won by 16 — the actual performance was more one-si
 401856560,20260322,R32,,Alabama,Texas Tech,Alabama,Texas Tech,90,65,Alabama,0.941,True,False,4.0,5.0,Dangerous,,,,"✅ Alabama def. Texas Tech 90–65 (#4 over #5). Model picked Alabama at 94% confidence — correct.
 Alabama shot 44% vs Texas Tech's 34% — a 10-point FG% advantage almost always decides the final margin in tournament play.
 High-confidence call (94%) that held up by 25 — when the model is this sure and the margin is this wide, it signals the underlying quality metrics are reading the matchup correctly.",44.0,45.0,73.0,47.0,18.0,13.0,25.0,8.0,5.0,25.0,40.0,34.0,16.0,79.0,35.0,14.0,10.0,8.0,9.0,4.0,49.0,41.0
+401856569,20260326,S16,,Arizona,Arkansas,Arizona,Arkansas,109,88,Arizona,0.634,True,False,1.0,4.0,Dangerous,Dangerous,,,"✅ Arizona def. Arkansas 109–88 (#1 over #4). Model picked Arizona at 63% confidence — correct.
+Arizona shot 64% vs Arkansas's 48% — a 16-point FG% advantage almost always decides the final margin in tournament play.
+Model was only 63% here but won by 21 — the actual performance was more one-sided than expected. Worth checking whether this team's metrics are underrated.",64,63,77,30,6,12,19,3,3,43,45,48,22,81,28,9,9,13,9,5,54,55
+401856568,20260326,S16,,Purdue,Texas,Purdue,Texas,79,77,Purdue,0.599,True,False,2.0,11.0,Dangerous,Dangerous,,,"✅ Purdue def. Texas 79–77 (#2 over #11). Model picked Purdue at 60% confidence — correct.
+Both teams shot similarly (48% vs 52%) and it came down to 2 points — games this tight often turn on late free throws or a single possession. The model was right directionally, but the margin says this was anyones game.",48,20,75,32,12,4,12,3,0,35,42,52,44,53,31,12,7,10,2,1,39,40
+401856566,20260326,S16,,Houston,Illinois,Illinois,Houston,55,65,Illinois,0.682,True,False,3.0,2.0,Dangerous,Dangerous,,,"✅ Illinois def. Houston 65–55 (#3 over #2). Model picked Illinois at 68% confidence — correct.
+Illinois's FG% edge (43% vs 34%) was the clearest separator — a 10-point tournament win with that kind of efficiency suggests the model confidence was grounded in real quality.
+Model was only 68% here but won by 10 — the actual performance was more one-sided than expected. Worth checking whether this team's metrics are underrated.",34,28,100,34,11,5,17,4,2,24,41,43,39,57,43,12,9,13,2,3,22,33
+401856567,20260326,S16,,Nebraska,Iowa,Iowa,Nebraska,71,77,Nebraska,0.69,False,True,9.0,4.0,Dangerous,Dangerous,,,"❌ Iowa def. Nebraska 77–71 (#9 over #4) — UPSET. Model picked Nebraska at 69% confidence — missed.
+Iowa shot 52% vs Nebraska's 41%, yet it came down to 6 — the shooting edge was not enough to convert, which happens in close tournament games.
+Lost by 6 — within the noise floor of tournament basketball. Do not over-correct. A game this tight on a different night could easily flip.",41,34,91,35,12,10,19,3,5,43,34,52,43,83,26,3,5,18,6,1,46,25
+401856570,20260327,S16,East,Duke,St. John's,Duke,St. John's,80,75,St. John's,0.556,False,False,1.0,5.0,Dangerous,Dangerous,,,"❌ Duke def. St. John's 80–75 (#1 over #5). Model picked St. John's at 56% confidence — missed.
+Duke shot 54% vs St. John's's 45%, yet it came down to 5 — the shooting edge was not enough to convert, which happens in close tournament games.
+Lost by 5 — within the noise floor of tournament basketball. Do not over-correct. A game this tight on a different night could easily flip.",54,36,63,40,12,9,13,4,5,40,35,45,41,50,27,10,6,19,7,3,39,41
+401856572,20260327,S16,Midwest,Michigan,Alabama,Michigan,Alabama,90,77,Alabama,0.62,False,False,1.0,4.0,Dangerous,Dangerous,,,"❌ Michigan def. Alabama 90–77 (#1 over #4). Model picked Alabama at 62% confidence — missed.
+Michigan's FG% edge (50% vs 36%) was the clearest separator — a 13-point tournament win with that kind of efficiency suggests the actual performance outpaced what the model saw pre-game.
+Missed at 62% confidence and lost by 13 — the result was not close. An upset tag on Alabama was there pre-tournament.",50,48,55,46,13,8,22,4,8,49,28,36,30,93,32,11,7,14,5,1,47,43
+401856571,20260327,S16,East,Connecticut,Michigan State,Connecticut,Michigan State,67,63,Michigan State,0.726,False,False,2.0,3.0,Dangerous,Dangerous,,,"❌ Connecticut def. Michigan State 67–63 (#2 over #3). Model picked Michigan State at 73% confidence — missed.
+Connecticut shot 46% vs Michigan State's 40%, yet it came down to 4 — the shooting edge was not enough to convert, which happens in close tournament games.
+Lost by 4 — within the noise floor of tournament basketball. Do not over-correct. A game this tight on a different night could easily flip.",46,43,63,30,6,10,20,8,6,27,36,40,25,72,39,13,10,13,6,3,35,32
+401856573,20260327,S16,,Iowa State,Tennessee,Tennessee,Iowa State,62,76,Tennessee,0.571,True,True,6.0,2.0,Dangerous,Dangerous,,,"✅ Tennessee def. Iowa State 76–62 (#6 over #2) — UPSET. Model picked Tennessee at 57% confidence — correct.
+Tennessee's rebounding edge (43-22) was the clearest separator — a 14-point tournament win with that kind of advantage suggests the model confidence was grounded in real quality.
+Model was only 57% here but won by 14 — the actual performance was more one-sided than expected. Worth checking whether this team's metrics are underrated.",39,22,60,22,8,11,16,7,0,34,42,51,32,60,43,16,17,22,5,7,33,29
+401856575,20260328,E8,,Arizona,Purdue,Arizona,Purdue,79,64,Arizona,0.599,True,False,1.0,2.0,Dangerous,Dangerous,,,"✅ Arizona def. Purdue 79–64 (#1 over #2). Model picked Arizona at 60% confidence — correct.
+Arizona shot 47% vs Purdue's 38% — a 9-point FG% advantage almost always decides the final margin in tournament play.
+Model was only 59% here but won by 15 — the actual performance was more one-sided than expected. Worth checking whether this team's metrics are underrated.",47,33,91,37,10,6,15,5,1,38,26,38,36,62,36,14,11,14,4,4,31,48
+401856574,20260328,E8,,Illinois,Iowa,Illinois,Iowa,71,59,Illinois,0.839,True,False,3.0,9.0,Dangerous,Dangerous,,,"✅ Illinois def. Iowa 71–59 (#3 over #9). Model picked Illinois at 84% confidence — correct.
+Illinois's rebounding edge (38-21) was the clearest separator — a 12-point tournament win with that kind of advantage suggests the model confidence was grounded in real quality.
+High-confidence call (83%) that held up by 12 — when the model is this sure and the margin is this wide, it signals the underlying quality metrics are reading the matchup correctly.",47,18,86,38,16,8,8,6,5,32,27,38,37,86,21,8,9,12,5,3,28,43
